@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
-import { signOut, updateProfile } from '@/app/auth/actions';
+import { useRouter } from 'next/navigation';
+import { signOut } from '@/app/auth/actions';
+import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { AuthNotice } from '@/components/auth/AuthShell';
 import GarmentCloset from '@/components/garments/GarmentCloset';
 import WardrobeCalendar from '@/components/calendar/WardrobeCalendar';
@@ -26,6 +28,8 @@ export default function Dashboard({ displayName = '', username = '', avatarUrl =
   const [toast, setToast] = useState('');
   const [addRequest, setAddRequest] = useState(0);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const router = useRouter();
   useEffect(() => () => { if (avatarPreview) URL.revokeObjectURL(avatarPreview); }, [avatarPreview]);
   const todayLabel = new Intl.DateTimeFormat('es-MX', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   const firstName = displayName.trim().split(/\s+/)[0];
@@ -33,6 +37,60 @@ export default function Dashboard({ displayName = '', username = '', avatarUrl =
 
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3000); };
   const openAddClothing = () => { setSection('Closet'); setAddRequest(value => value + 1); };
+
+  async function saveProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!email || profileSaving) return;
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const displayName = String(formData.get('display_name') || '').trim();
+    const username = String(formData.get('username') || '').trim().replace(/^@/, '').toLowerCase();
+    const avatarInput = form.elements.namedItem('avatar');
+    const avatar = avatarInput instanceof HTMLInputElement ? avatarInput.files?.[0] : undefined;
+    if (!displayName || displayName.length > 80) { notify('Escribe un nombre para mostrar de hasta 80 caracteres.'); return; }
+    if (username && !/^[a-z0-9_]{3,24}$/.test(username)) { notify('El usuario debe tener de 3 a 24 letras, números o guiones bajos.'); return; }
+    if (avatar && (!['image/jpeg', 'image/png', 'image/webp'].includes(avatar.type) || avatar.size > 5 * 1024 * 1024)) {
+      notify('Elige una imagen JPG, PNG o WEBP de hasta 5 MB.'); return;
+    }
+
+    setProfileSaving(true);
+    let supabase: ReturnType<typeof createBrowserSupabaseClient> | null = null;
+    let uploadedPath: string | null = null;
+    try {
+      let avatarPath: string | null = null;
+      if (avatar) {
+        supabase = createBrowserSupabaseClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) throw new Error('Tu sesión expiró. Inicia sesión de nuevo.');
+        const extension = avatar.type === 'image/jpeg' ? 'jpg' : avatar.type === 'image/png' ? 'png' : 'webp';
+        avatarPath = `${user.id}/avatars/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await supabase.storage.from('private-photos').upload(avatarPath, avatar, {
+          contentType: avatar.type, cacheControl: '3600', upsert: false,
+        });
+        if (uploadError) throw new Error('No se pudo subir la foto privada. Comprueba el almacenamiento de perfil en Supabase e inténtalo de nuevo.');
+        uploadedPath = avatarPath;
+      }
+
+      const response = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ display_name: displayName, username, avatar_path: avatarPath }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No pudimos guardar el perfil. Inténtalo de nuevo.');
+      uploadedPath = null;
+      if (avatarInput instanceof HTMLInputElement) avatarInput.value = '';
+      setAvatarPreview(null);
+      notify('Cambios guardados.');
+      router.refresh();
+    } catch (error) {
+      if (uploadedPath && supabase) await supabase.storage.from('private-photos').remove([uploadedPath]);
+      notify(error instanceof Error ? error.message : 'No pudimos guardar el perfil. Inténtalo de nuevo.');
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   return <main className="app-shell phase-two">
     <aside className="sidebar">
@@ -67,7 +125,7 @@ export default function Dashboard({ displayName = '', username = '', avatarUrl =
       </div>}
       {section === 'Closet' && <div className="content subpage"><GarmentCloset enabled={supabaseConfigured} processorAvailable={processorAvailable} tripoAvailable={tripoAvailable} addRequest={addRequest} /></div>}
       {section === 'Outfits' && <div className="content subpage"><OutfitStudio enabled={supabaseConfigured} /></div>}
-      {section === 'Perfil' && <div className="content subpage"><div className="page-title-row"><div><h1>Perfil</h1></div></div>{(authError || authNotice) && <AuthNotice error={authError} notice={authNotice} configured={Boolean(email)}/>}<div className="profile-card"><div className="profile-cover"><span>O-CLOÜD</span><div className="profile-avatar">{avatarPreview || avatarUrl ? <Image src={avatarPreview || avatarUrl!} alt="Foto de perfil" width={76} height={76} unoptimized /> : displayName.slice(0, 1).toUpperCase() || 'O'}</div><label className="profile-avatar-picker" htmlFor="profile-avatar">Cambiar foto</label></div><div className="profile-form"><form action={updateProfile}><input className="profile-avatar-input" id="profile-avatar" name="avatar" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Cambiar foto de perfil" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) setAvatarPreview(URL.createObjectURL(file)); }} disabled={!email}/><label htmlFor="profile-username">Nombre de usuario<div className="profile-username-field"><span aria-hidden="true">@</span><input id="profile-username" name="username" defaultValue={username} placeholder="usuario" pattern="[A-Za-z0-9_]{3,24}" maxLength={24} disabled={!email}/></div></label><label htmlFor="profile-display-name">Nombre para mostrar<input id="profile-display-name" name="display_name" defaultValue={displayName} placeholder="Tu nombre" required maxLength={80} disabled={!email}/></label><label>Correo electrónico<input value={email} placeholder="No hay sesión iniciada" disabled readOnly /></label><div className="form-bottom profile-form-bottom"><button className="primary-button" type="submit" disabled={!email}>Guardar cambios</button></div></form>{email && <form action={signOut} className="signout-form"><button className="text-button" type="submit">Cerrar sesión　↗</button></form>}</div><div className="profile-preferences"><div className="eyebrow">PREFERENCIAS</div><div><span>✳</span><b>Tu estilo personal</b><small>Preferencias, colores y ocasiones favoritas</small></div><div><span>⌖</span><b>Tu ubicación</b><small>Para ideas de outfits según el clima</small></div><div><span>♡</span><b>Privacidad y bienestar</b><small>Tus datos, siempre bajo tu control</small></div></div></div></div>}
+      {section === 'Perfil' && <div className="content subpage"><div className="page-title-row"><div><h1>Perfil</h1></div></div>{(authError || authNotice) && <AuthNotice error={authError} notice={authNotice} configured={Boolean(email)}/>}<div className="profile-card"><div className="profile-cover"><span>O-CLOÜD</span><div className="profile-avatar">{avatarPreview || avatarUrl ? <Image src={avatarPreview || avatarUrl!} alt="Foto de perfil" width={76} height={76} unoptimized /> : displayName.slice(0, 1).toUpperCase() || 'O'}</div><label className="profile-avatar-picker" htmlFor="profile-avatar">Cambiar foto</label></div><div className="profile-form"><form onSubmit={saveProfile}><input className="profile-avatar-input" id="profile-avatar" name="avatar" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Cambiar foto de perfil" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) setAvatarPreview(URL.createObjectURL(file)); }} disabled={!email}/><label htmlFor="profile-username">Nombre de usuario<div className="profile-username-field"><span aria-hidden="true">@</span><input id="profile-username" name="username" defaultValue={username} placeholder="usuario" pattern="[A-Za-z0-9_]{3,24}" maxLength={24} disabled={!email}/></div></label><label htmlFor="profile-display-name">Nombre para mostrar<input id="profile-display-name" name="display_name" defaultValue={displayName} placeholder="Tu nombre" required maxLength={80} disabled={!email}/></label><label>Correo electrónico<input value={email} placeholder="No hay sesión iniciada" disabled readOnly /></label><div className="form-bottom profile-form-bottom"><button className="primary-button" type="submit" disabled={!email || profileSaving}>{profileSaving ? 'Guardando…' : 'Guardar cambios'}</button></div></form>{email && <form action={signOut} className="signout-form"><button className="text-button" type="submit">Cerrar sesión　↗</button></form>}</div><div className="profile-preferences"><div className="eyebrow">PREFERENCIAS</div><div><span>✳</span><b>Tu estilo personal</b><small>Preferencias, colores y ocasiones favoritas</small></div><div><span>⌖</span><b>Tu ubicación</b><small>Para ideas de outfits según el clima</small></div><div><span>♡</span><b>Privacidad y bienestar</b><small>Tus datos, siempre bajo tu control</small></div></div></div></div>}
       <footer className="footer"><span>O-CLOÜD © 2026</span><a href="/privacy">Privacidad ↗</a></footer>
     </section>
     <nav className="mobile-nav" aria-label="Navegación móvil"><button type="button" aria-current={section === 'Inicio' ? 'page' : undefined} onClick={() => setSection('Inicio')} className={section === 'Inicio' ? 'active' : ''}><span aria-hidden="true">⌂</span>Inicio</button><button type="button" aria-current={section === 'Closet' ? 'page' : undefined} onClick={() => setSection('Closet')} className={section === 'Closet' ? 'active' : ''}><span aria-hidden="true">▤</span>Closet</button><button type="button" className="mobile-nav-add" aria-label="Añadir una prenda" onClick={openAddClothing}><span aria-hidden="true">＋</span></button><button type="button" aria-current={section === 'Outfits' ? 'page' : undefined} onClick={() => setSection('Outfits')} className={section === 'Outfits' ? 'active' : ''}><span aria-hidden="true">◈</span>Outfits</button><button type="button" aria-current={section === 'Perfil' ? 'page' : undefined} onClick={() => setSection('Perfil')} className={section === 'Perfil' ? 'active' : ''}><span aria-hidden="true">○</span>Perfil</button></nav>
