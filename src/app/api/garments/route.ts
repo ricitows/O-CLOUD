@@ -109,7 +109,21 @@ export async function POST(request: Request) {
   });
   if (uploadError) {
     if (processingJobId && processedBytes) await supabase.from('processing_jobs').update({ status: 'failed', safe_error: 'No se pudo guardar el archivo.' }).eq('id', processingJobId).eq('user_id', user.id);
-    return NextResponse.json({ error: 'No se pudo guardar la imagen privada. Inténtalo de nuevo.' }, { status: 502 });
+    const requestId = crypto.randomUUID();
+    const storageStatus = Number(uploadError.statusCode);
+    console.error('Private garment image upload failed', { requestId, storageStatus: Number.isFinite(storageStatus) ? storageStatus : null });
+
+    let message = 'Supabase Storage no pudo guardar la imagen. Inténtalo de nuevo.';
+    if (storageStatus === 401 || storageStatus === 403) {
+      message = 'Supabase Storage rechazó la subida. Revisa las políticas del bucket privado “garments”.';
+    } else if (storageStatus === 404) {
+      message = 'No existe el almacenamiento privado “garments” en este proyecto de Supabase.';
+    } else if (storageStatus === 413) {
+      message = 'La imagen supera el límite permitido por el almacenamiento. Elige una imagen menor de 10 MB.';
+    } else if (storageStatus === 400) {
+      message = 'Supabase Storage rechazó el formato de la imagen. Prueba con JPG, PNG o WEBP.';
+    }
+    return NextResponse.json({ error: message, requestId }, { status: 502 });
   }
   if (processedBytes && processedPath) {
     const { error: processedUploadError } = await supabase.storage.from('garments').upload(processedPath, processedBytes, {
