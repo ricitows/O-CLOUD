@@ -1,0 +1,55 @@
+'use client';
+
+import Image from 'next/image';
+import { useEffect, useState } from 'react';
+
+type Garment = { id: string; name: string; image_url: string | null };
+type Outfit = { id: string; name: string; items: Garment[] };
+type Result = { id: string; status: string; result_url: string | null };
+
+export default function VirtualTryOn({ outfits, enabled }: { outfits: Outfit[]; enabled: boolean }) {
+  const [outfitId, setOutfitId] = useState('');
+  const [garmentId, setGarmentId] = useState('');
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [authorizePaid, setAuthorizePaid] = useState(false);
+  const [result, setResult] = useState<Result | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const outfit = outfits.find(item => item.id === outfitId);
+  useEffect(() => { if (outfit?.items[0]) setGarmentId(outfit.items[0].id); else setGarmentId(''); }, [outfitId, outfit]);
+  useEffect(() => {
+    if (!result || result.status !== 'processing') return;
+    const timer = window.setInterval(async () => {
+      try { const response = await fetch(`/api/try-on?id=${result.id}`, { cache: 'no-store' }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setResult(body); if (body.status !== 'processing') window.clearInterval(timer); }
+      catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo revisar el resultado.'); window.clearInterval(timer); }
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [result]);
+  async function start(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!photo || !outfitId || !garmentId || !consent) return;
+    setBusy(true); setError(''); setResult(null);
+    const form = new FormData(); form.set('model_image', photo); form.set('outfit_id', outfitId); form.set('garment_id', garmentId); form.set('consent', 'yes'); form.set('allow_paid', 'yes');
+    try { const response = await fetch('/api/try-on', { method: 'POST', body: form }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'No se pudo iniciar la prueba.'); setResult(body); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo iniciar la prueba.'); }
+    finally { setBusy(false); setAuthorizePaid(false); }
+  }
+  async function removeResult() {
+    if (!result) return;
+    try { const response = await fetch(`/api/try-on?id=${result.id}`, { method: 'DELETE' }); if (!response.ok) throw new Error('No se pudo eliminar el resultado.'); setResult(null); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el resultado.'); }
+  }
+  return <section className="virtual-try-on upload-panel"><div className="eyebrow">PRUEBA VISUAL · EXPERIMENTAL</div><h2>Prueba una pieza de tu look</h2><p>FASHN genera una vista de una prenda por vez. No combina el outfit completo ni predice talla o ajuste físico.</p>
+    {!enabled && <div className="integration-note">Configura FASHN_API_KEY en el servidor para habilitar esta integración.</div>}
+    {error && <p className="garment-notice" role="alert">{error}</p>}
+    {result?.status === 'completed' && result.result_url ? <div className="try-on-result"><Image src={result.result_url} alt="Resultado generado por IA de una prueba visual" width={480} height={640} unoptimized /><div><b>Imagen generada por IA</b><p>Es una simulación visual, no una medición del cuerpo ni una garantía de ajuste.</p><button className="text-button" type="button" onClick={() => void removeResult()}>Eliminar resultado</button></div></div> : result?.status === 'processing' ? <p role="status" className="integration-note">Generando y guardando el resultado en tu espacio privado…</p> : result?.status === 'failed' ? <p className="garment-notice">El proveedor no pudo generar esta prueba. Puedes intentarlo de nuevo.</p> : <form onSubmit={start} className="try-on-form">
+      <label>Outfit guardado<select value={outfitId} onChange={event => setOutfitId(event.target.value)} required><option value="">Selecciona un outfit</option>{outfits.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Prenda para esta prueba<select value={garmentId} onChange={event => setGarmentId(event.target.value)} required disabled={!outfit}>{outfit?.items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Foto tuya de cuerpo completo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setPhoto(event.target.files?.[0] || null)} required /></label>
+      <label className="try-on-consent"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} required />Confirmo que puedo usar esta foto y autorizo enviarla junto con la imagen de la prenda a FASHN. La foto personal no se guarda en O-CLOÜD.</label>
+      <label className="try-on-consent"><input type="checkbox" checked={authorizePaid} onChange={event => setAuthorizePaid(event.target.checked)} required />Autorizo esta llamada a FASHN, que puede consumir créditos o generar cargos.</label>
+      <button className="primary-button" type="submit" disabled={!enabled || busy || !outfits.length || !authorizePaid}>{busy ? 'Iniciando…' : 'Generar prueba visual →'}</button>
+    </form>}
+    <small className="try-on-privacy">FASHN documenta el manejo temporal de imágenes Base64, pero conserva registros de solicitudes; consulta sus condiciones y privacidad antes de continuar. Resultado privado en O-CLOÜD.</small>
+  </section>;
+}

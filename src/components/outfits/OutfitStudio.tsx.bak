@@ -1,0 +1,77 @@
+'use client';
+
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import VirtualTryOn from './VirtualTryOn';
+
+type Garment = { id: string; name: string; category: string; color: string | null; image_url: string | null };
+type Outfit = { id: string; name: string; description: string | null; occasion: string | null; season: string | null; is_favorite: boolean; items: Garment[] };
+
+export default function OutfitStudio({ enabled, tryOnAvailable = false }: { enabled: boolean; tryOnAvailable?: boolean }) {
+  const router = useRouter();
+  const [garments, setGarments] = useState<Garment[]>([]);
+  const [outfits, setOutfits] = useState<Outfit[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [name, setName] = useState('');
+  const [occasion, setOccasion] = useState('');
+  const [season, setSeason] = useState('');
+  const [description, setDescription] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(enabled);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    if (!enabled) return;
+    setLoading(true); setError('');
+    try {
+      const [garmentResponse, outfitResponse] = await Promise.all([fetch('/api/garments', { cache: 'no-store' }), fetch('/api/outfits', { cache: 'no-store' })]);
+      const garmentBody = await garmentResponse.json(); const outfitBody = await outfitResponse.json();
+      if (!garmentResponse.ok) throw new Error(garmentBody.error || 'No se pudieron cargar las prendas.');
+      if (!outfitResponse.ok) throw new Error(outfitBody.error || 'No se pudieron cargar los outfits.');
+      setGarments(garmentBody.garments); setOutfits(outfitBody.outfits);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudieron cargar tus datos.'); }
+    finally { setLoading(false); }
+  }, [enabled]);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const sortedOutfits = useMemo(() => [...outfits].sort((a, b) => Number(b.is_favorite) - Number(a.is_favorite)), [outfits]);
+  function toggleGarment(id: string) { setSelected(current => current.includes(id) ? current.filter(value => value !== id) : current.length < 12 ? [...current, id] : current); }
+
+  async function createOutfit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(''); setMessage('');
+    try {
+      const response = await fetch('/api/outfits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, description, occasion, season, garment_ids: selected }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'No se pudo guardar el outfit.');
+      setName(''); setDescription(''); setOccasion(''); setSeason(''); setSelected([]); setCreating(false); setMessage('Outfit guardado.'); await refresh(); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el outfit.'); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleFavorite(outfit: Outfit) {
+    try {
+      const response = await fetch(`/api/outfits/${outfit.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ is_favorite: !outfit.is_favorite }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'No se pudo actualizar el favorito.');
+      setOutfits(current => current.map(item => item.id === outfit.id ? { ...item, is_favorite: !item.is_favorite } : item));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo actualizar el favorito.'); }
+  }
+
+  async function deleteOutfit(outfit: Outfit) {
+    if (!window.confirm(`¿Eliminar “${outfit.name}”? También se quitará del calendario.`)) return;
+    try {
+      const response = await fetch(`/api/outfits/${outfit.id}`, { method: 'DELETE' });
+      if (!response.ok) { const body = await response.json(); throw new Error(body.error || 'No se pudo eliminar.'); }
+      setOutfits(current => current.filter(item => item.id !== outfit.id)); setMessage('Outfit eliminado.'); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el outfit.'); }
+  }
+
+  return <div className="outfit-studio"><div className="eyebrow">ESTILISMO PERSONAL</div><div className="page-title-row"><div><h1>Outfits</h1><p className="intro">Combina tus piezas. Cuenta tu historia.</p></div><button className="primary-button" onClick={() => setCreating(value => !value)} disabled={!enabled || !garments.length}>＋ Crear outfit</button></div>
+    {error && <p className="garment-notice" role="alert">{error}</p>}{message && <p className="garment-notice" role="status">{message}</p>}
+    {creating && <form className="upload-panel outfit-create-form" onSubmit={createOutfit}><button type="button" className="close-button" aria-label="Cerrar" onClick={() => setCreating(false)}>×</button><div className="eyebrow">NUEVA COMBINACIÓN</div><h2>Arma tu look</h2><div className="garment-fields"><label>Nombre<input value={name} onChange={event => setName(event.target.value)} maxLength={100} required /></label><label>Ocasión<input value={occasion} onChange={event => setOccasion(event.target.value)} maxLength={80} placeholder="Opcional" /></label><label>Temporada<input value={season} onChange={event => setSeason(event.target.value)} maxLength={40} placeholder="Opcional" /></label><label>Nota<input value={description} onChange={event => setDescription(event.target.value)} maxLength={500} placeholder="Opcional" /></label></div><p className="muted">Selecciona entre 1 y 12 prendas de tu Closet.</p><div className="garment-picker">{garments.map(item => <label key={item.id} className={`garment-pick ${selected.includes(item.id) ? 'selected' : ''}`}><input type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleGarment(item.id)} />{item.image_url ? <Image src={item.image_url} alt="" fill unoptimized sizes="120px" /> : <span>Sin foto</span>}<b>{item.name}</b><small>{item.category}</small></label>)}</div><div className="upload-actions"><span>{selected.length} prendas seleccionadas</span><button className="primary-button" type="submit" disabled={busy || !name.trim() || !selected.length}>{busy ? 'Guardando…' : 'Guardar outfit →'}</button></div></form>}
+    {!enabled && <div className="integration-note wide-note">Conecta Supabase y aplica la migración para guardar outfits.</div>}
+    {loading ? <div className="empty-closet"><p>Cargando tus outfits…</p></div> : outfits.length ? <div className="saved-outfits">{sortedOutfits.map(outfit => <article className="saved-outfit" key={outfit.id}><div className="saved-outfit-head"><div><h2>{outfit.name}</h2><span>{[outfit.occasion, outfit.season].filter(Boolean).join(' · ') || 'Outfit personal'}</span></div><button type="button" className="outfit-favorite" onClick={() => void toggleFavorite(outfit)} aria-label={outfit.is_favorite ? 'Quitar de favoritos' : 'Marcar favorito'}>{outfit.is_favorite ? '♥' : '♡'}</button></div>{outfit.description && <p>{outfit.description}</p>}<div className="outfit-item-strip">{outfit.items.map(item => <div key={item.id} title={`${item.name} · ${item.category}`}>{item.image_url ? <Image src={item.image_url} alt={item.name} fill unoptimized sizes="100px" /> : <span>◇</span>}</div>)}</div><div className="saved-outfit-foot"><span>{outfit.items.length} {outfit.items.length === 1 ? 'prenda' : 'prendas'}</span><button type="button" className="text-button" onClick={() => void deleteOutfit(outfit)}>Eliminar outfit</button></div></article>)}</div> : !creating && <div className="outfit-editor"><div className="editor-preview"><span className="preview-kicker">TU PRÓXIMO LOOK</span><div className="preview-silhouette"><div/><div/><div/><span>O</span></div><span className="preview-caption">La inspiración empieza con tu closet</span></div><div className="editor-copy"><div className="eyebrow">EL EDITOR DE OUTFITS</div><h2>{garments.length ? 'Una combinación.' : 'Empieza por tu Closet.'}<br/><em>Muchísimas posibilidades.</em></h2><p>{garments.length ? 'Elige piezas de tu colección y guarda los looks que se sienten como tú.' : 'Añade prendas primero; podrás combinarlas aquí.'}</p><button className="text-button" onClick={() => setCreating(true)} disabled={!garments.length}>Crear mi primer outfit ↗</button></div></div>}
+    <VirtualTryOn outfits={outfits} enabled={enabled && tryOnAvailable} />
+  </div>;
+}

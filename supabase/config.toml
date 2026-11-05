@@ -1,0 +1,10 @@
+project_id = "o-cloud"
+
+[functions.remove-background]
+verify_jwt = true
+
+[functions.generate-3d]
+verify_jwt = true
+
+[functions.garment-assistant]
+verify_jwt = true
