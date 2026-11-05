@@ -1,8 +1,0 @@
-node_modules/
-.next/
-.next-dev/
-.next-output/
-out/
-.env*
-!.env.example
-*.tsbuildinfo
