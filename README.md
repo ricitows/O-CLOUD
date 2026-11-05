@@ -67,30 +67,4 @@ El endpoint privado puede procesar imágenes con Clipdrop si `CLIPDROP_API_KEY` 
 
 Outfits y asignaciones de calendario usan tablas privadas con RLS. Se permite un solo outfit por día; al asignar otro se reemplaza el anterior. El calendario limita sus consultas a 63 días y las notas a 500 caracteres.
 
-La sugerencia de clima solicita permiso de geolocalización al pulsar el botón, consulta Open-Meteo en el servidor y no guarda las coordenadas. Open-Meteo publica su API estándar con licencia CC BY 4.0; confirma sus requisitos comerciales antes de un lanzamiento de pago. Las recomendaciones se calculan en JavaScript y no necesitan clave de IA. OpenAI es opcional: aunque `OPENAI_API_KEY` exista, no se llama salvo que el usuario marque el consentimiento de posible gasto en esa recomendación. Solo entonces se envían al modelo nombres, categorías, colores y clima, nunca imágenes corporales; el servidor valida los IDs seleccionados y mantiene límite de 20 llamadas cada 24 horas.
-
-FASHN y Tripo también son optativos y no se invocan por tener una clave configurada. Cada generación requiere confirmación de posible consumo de créditos en la interfaz y un parámetro de autorización validado por el servidor. Si faltan claves, se muestra el estado de integración y las funciones gratuitas y el resto de la aplicación continúan disponibles.
-
-No añadas claves `service_role` a variables públicas. `.env.local` está excluido de Git.
-
-## Funcionalidad implementada
-
-- Registro, inicio y cierre de sesión, confirmación de correo y recuperación de contraseña con Supabase Auth; sesión SSR en cookies y ruta principal protegida.
-- Perfil de nombre para mostrar persistido con RLS. Se incluye el resumen técnico de privacidad en `/privacy`.
-- Navegación responsive entre Inicio, Closet, Outfits y Perfil, con el icono de marca original.
-- Closet privado con carga, validación de firma/tipo/tamaño, edición de nombre/categoría/subcategoría/color, filtros, orden, favoritos y borrado.
-- Eliminación de fondo integrada mediante `remove-background`; la clave va en Supabase Edge Function Secrets. Si falta la clave o falla el proveedor, la prenda se guarda como original y el Closet sigue disponible.
-- Creación, favorito y borrado de outfits basados en prendas reales. Calendario mensual/semanal persistente con una asignación por día; asignar otro outfit reemplaza al existente.
-- Estilista con clima real de Open-Meteo y selección de prendas propias. OpenAI es opcional; sin clave, se usa la curaduría por reglas, identificada en pantalla.
-- Probador de FASHN integrado al flujo: consentimiento explícito, una prenda por generación, límite de tres pruebas cada 24 h, consulta de créditos, foto personal no guardada en O-CLOÜD, resultados privados eliminables y avisos de limitaciones. Requiere `FASHN_API_KEY` y cuenta con créditos.
-- Reconstrucción 3D integrada con Tripo: procesa la imagen privada JPG/PNG de una prenda, limita a tres generaciones por usuario cada 24 h, consulta una tarea asíncrona y guarda el GLB de vuelta en almacenamiento privado. Requiere `TRIPO_API_KEY`. Por ahora el Closet ofrece enlace temporal al GLB; el visor interactivo con rotación/zoom aún falta.
-
-## Pendientes de despliegue y aceptación final
-
-Las funciones Edge deben desplegarse en el proyecto Supabase que ya usa la aplicación. Este cambio no requiere migraciones: conserva el esquema y los datos actuales. Si ya ejecutaste las migraciones, no las repitas. Después del despliegue, verifica autenticación/CRUD y las funciones con los pasos anteriores.
-
-Las claves de Clipdrop, OpenAI, FASHN y Tripo son opcionales y no están presentes en `.env.example` como valores. Añade las claves de Clipdrop, OpenAI y Tripo a Supabase Edge Function Secrets; FASHN conserva su ruta Next.js y su configuración server-side existente. La generación 3D está preparada conforme a la carga de archivos, endpoint image-to-model y flujo de tareas descritos en la [documentación oficial de Tripo](https://developers.tripo3d.com/en/docs/generation-image-to-model/standard), pero requiere prueba contra una cuenta real; una vista única solo estima volumen y no representa un escaneo exacto ni captura 360°. No hay visor interactivo con rotación/zoom, interfaz de perfil corporal, borrado autoservicio de cuenta, edición/duplicado completo de outfits ni suite automatizada de pruebas. El resumen `/privacy` no sustituye términos ni aviso legal revisados para el país de operación.
-
-## Comprobaciones y despliegue
-
-Comprobaciones locales: `npm run lint`, `npx tsc --noEmit` y `npm run build`. El CRUD de Supabase y proveedores requiere una sesión configurada con acceso a red y credenciales válidas, y no se considera probado hasta generar resultados reales. Para desplegar, configura las variables de `.env.example` como secretos del servidor en un host compatible con Next.js, aplica las dos migraciones, añade URLs de redirección de Auth para el dominio real y realiza los flujos de aceptación con una cuenta de prueba.
+aceptación con una cuenta de prueba.
