@@ -43,7 +43,6 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState('recent');
   const [busy, setBusy] = useState(false);
-  const [allowImageProcessing, setAllowImageProcessing] = useState(false);
   const [notice, setNotice] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState({ name: '', category: categories[0], subcategory: '', color: '' });
@@ -77,7 +76,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && !busy) { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; }
+    if (event.key === 'Escape' && !busy) { setAdding(false); setFile(null); uploadRequestId.current = null; }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape); };
@@ -121,7 +120,6 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
       return;
     }
     setFile(candidate);
-    setAllowImageProcessing(false);
     uploadRequestId.current = crypto.randomUUID();
     if (!name) setName(candidate.name.replace(/\.[^.]+$/, '').slice(0, 100));
     setNotice('');
@@ -137,13 +135,13 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
     const requestId = uploadRequestId.current || crypto.randomUUID();
     uploadRequestId.current = requestId;
     data.set('processing_job_id', requestId);
-    data.set('allow_paid', allowImageProcessing ? 'yes' : 'no');
+    data.set('allow_paid', 'yes');
     try {
       const response = await fetch('/api/garments', { method: 'POST', body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'No se pudo guardar la prenda.');
       setItems(current => [result.garment, ...current]);
-      setAdding(false); setFile(null); setName(''); setSubcategory(''); setColor(''); setAllowImageProcessing(false); uploadRequestId.current = null;
+      setAdding(false); setFile(null); setName(''); setSubcategory(''); setColor(''); uploadRequestId.current = null;
       setNotice([result.processing_warning, result.garment.image_error].filter(Boolean).join(' ') || (result.garment.processing_status === 'ready' ? 'Prenda procesada y guardada en tu Closet.' : 'Prenda guardada de forma privada.'));
       router.refresh();
     } catch (error) { setNotice(error instanceof Error ? error.message : 'No se pudo guardar la prenda.'); }
@@ -239,11 +237,11 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
   }
 
   return <div className="garment-closet">
-    <div className="closet-masthead"><div><h1>Closet</h1></div><div className="closet-masthead-actions"><div className="closet-piece-count"><b>{items.length.toString().padStart(2, '0')}</b><span>PRENDAS</span></div><button className="primary-button" type="button" onClick={() => { setAdding(true); setAllowImageProcessing(false); setNotice(''); }}>＋ Añadir prenda</button></div></div>
+    <div className="closet-masthead"><div><h1>Closet</h1></div><div className="closet-masthead-actions"><div className="closet-piece-count"><b>{items.length.toString().padStart(2, '0')}</b><span>PRENDAS</span></div><button className="primary-button" type="button" onClick={() => { setAdding(true); setNotice(''); }}>＋ Añadir prenda</button></div></div>
     {notice && <p className="garment-notice" role="status">{notice}</p>}
-    {adding && <div className="garment-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; } }}>
+    {adding && <div className="garment-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) { setAdding(false); setFile(null); uploadRequestId.current = null; } }}>
       <form className="upload-panel garment-form garment-modal" role="dialog" aria-modal="true" aria-labelledby="garment-modal-title" onSubmit={saveGarment}>
-        <div className="garment-modal-heading"><div><h2 id="garment-modal-title">Añadir prenda</h2></div><button className="close-button" type="button" aria-label="Cerrar formulario" onClick={() => { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; }}>×</button></div>
+        <div className="garment-modal-heading"><div><h2 id="garment-modal-title">Añadir prenda</h2></div><button className="close-button" type="button" aria-label="Cerrar formulario" onClick={() => { setAdding(false); setFile(null); uploadRequestId.current = null; }}>×</button></div>
         <p className="muted">La foto se guarda en almacenamiento privado.</p>
         {notice && <p className="garment-notice" role="alert">{notice}</p>}
         <label className={`upload-drop ${preview ? 'has-photo' : ''}`} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); selectFile(event.dataTransfer.files[0]); }}>
@@ -251,7 +249,6 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
           <input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onChange={event => { void selectFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
         </label>
         <div className="garment-fields"><label>Nombre<input value={name} onChange={event => { uploadRequestId.current = null; setName(event.target.value); }} maxLength={100} required /></label><label>Categoría<select value={category} onChange={event => { uploadRequestId.current = null; setCategory(event.target.value); }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label>Subcategoría<input value={subcategory} onChange={event => { uploadRequestId.current = null; setSubcategory(event.target.value); }} maxLength={80} placeholder="Opcional" /></label><label>Color<input value={color} onChange={event => { uploadRequestId.current = null; setColor(event.target.value); }} maxLength={60} placeholder="Opcional" /></label></div>
-        <label className="paid-opt-in"><input type="checkbox" checked={allowImageProcessing} onChange={event => setAllowImageProcessing(event.target.checked)} />Autorizo el procesamiento externo, que puede generar costos, para mejorar esta imagen. Si no lo autorizas, se conservará la fotografía original.</label>
         <div className="upload-actions"><span>JPG, PNG o WEBP · Máximo 10 MB</span><button className="primary-button" type="submit" disabled={!file || !name.trim() || busy || !enabled}>{busy ? 'Procesando y guardando…' : 'Guardar prenda'}</button></div>
         {!enabled && <div className="integration-note">Conecta Supabase para guardar prendas en tu cuenta. Esta vista previa no persiste.</div>}
       </form>

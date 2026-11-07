@@ -14,7 +14,6 @@ export default function VirtualTryOn({ outfits, enabled }: { outfits: Outfit[]; 
   const [message, setMessage] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewMode, setPreviewMode] = useState<CollageMode | null>(null);
-  const [allowExternalProcessing, setAllowExternalProcessing] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(1600);
   const collageRequest = useRef<{ key: string; id: string } | null>(null);
   const outfit = outfits.find(item => item.id === outfitId);
@@ -29,7 +28,6 @@ export default function VirtualTryOn({ outfits, enabled }: { outfits: Outfit[]; 
     setOutfitId(id);
     setPreviewUrl('');
     setPreviewMode(null);
-    setAllowExternalProcessing(false);
     setError('');
     setMessage('');
   }
@@ -44,7 +42,7 @@ export default function VirtualTryOn({ outfits, enabled }: { outfits: Outfit[]; 
       const response = await fetch('/api/collage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outfit_id: outfitId, request_id: collageRequest.current.id, diagnostic_mode: mode === 'diagnostic', allow_paid: mode === 'final' && allowExternalProcessing }),
+        body: JSON.stringify({ outfit_id: outfitId, request_id: collageRequest.current.id, diagnostic_mode: mode === 'diagnostic', allow_paid: mode === 'final' }),
         cache: 'no-store',
       });
       if (!response.ok) {
@@ -102,7 +100,6 @@ export default function VirtualTryOn({ outfits, enabled }: { outfits: Outfit[]; 
             </div>
           </div>}
           {missingPhotos && <p className="collage-notice" role="alert">Falta una fotografía accesible. Revisa las imágenes de este outfit en tu Closet; no se sustituirá ninguna prenda.</p>}
-          <label className="paid-opt-in"><input type="checkbox" checked={allowExternalProcessing} onChange={event => setAllowExternalProcessing(event.target.checked)} />Autorizo el procesamiento externo, que puede generar costos, si alguna foto necesita recorte. La vista gratuita conserva los fondos.</label>
           {error && <p className="collage-notice" role="alert">{error}</p>}
           {message && <p className="collage-success" role="status">{message}</p>}
           <div className="collage-actions">

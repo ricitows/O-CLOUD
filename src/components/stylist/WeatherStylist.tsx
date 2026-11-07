@@ -9,7 +9,6 @@ type Recommendation = {
   weather: { temperature: number; apparentTemperature: number; precipitation: number; label: string };
   source: 'ai' | 'rules';
   aiAvailable: boolean;
-  assistant_notice?: string | null;
   explanation: string;
   items: Array<{ id: string; name: string; category: string; color: string | null; image_url: string | null; image_error?: string | null }>;
 };
@@ -22,7 +21,6 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [allowAdvancedSuggestion, setAllowAdvancedSuggestion] = useState(false);
   const recommendationRequestId = useRef<string | null>(null);
   const refreshRecommendationImages = useCallback(async () => {
     if (!enabled || !recommendation) return;
@@ -43,9 +41,7 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
   }, [enabled, recommendation]);
   useSignedImageRenewal(refreshRecommendationImages, enabled && Boolean(recommendation));
   async function getSuggestion() {
-    if (!allowAdvancedSuggestion) { setError('Autoriza la recomendación avanzada para continuar.'); return; }
     setError(''); setNotice(''); setRecommendation(null);
-    setAllowAdvancedSuggestion(false);
     if (!enabled) { setError('Conecta Supabase para consultar tus prendas.'); return; }
     if (!navigator.geolocation) { setError('Este dispositivo no permite compartir la ubicación.'); return; }
     setLoading(true);
@@ -58,7 +54,7 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
         if (!response.ok) throw new Error(body.error || 'No se pudo crear la sugerencia.');
         recommendationRequestId.current = null;
         setRecommendation(body);
-        setNotice(body.assistant_notice || (body.source === 'rules' ? 'Preparamos una sugerencia alternativa con prendas de tu Closet.' : ''));
+        setNotice('');
       } catch { setError('No pudimos generar sugerencias en este momento. Inténtalo más tarde.'); }
       finally { setLoading(false); }
     }, reason => {
@@ -79,7 +75,7 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
     finally { setSaving(false); }
   }
 
-  return <section className="panel weather-stylist"><div className="weather-stylist-copy"><label>Ocasión <select value={occasion} onChange={event => { recommendationRequestId.current = null; setAllowAdvancedSuggestion(false); setOccasion(event.target.value); }}><option value="">Cualquier ocasión</option><option>Trabajo</option><option>Casual</option><option>Formal</option><option>Evento</option><option>Deporte</option></select></label><label className="paid-opt-in"><input type="checkbox" checked={allowAdvancedSuggestion} onChange={event => setAllowAdvancedSuggestion(event.target.checked)} />Autorizo el procesamiento externo, que puede generar costos, para preparar una recomendación avanzada. Sin autorización, puedes seguir usando las sugerencias habituales.</label><button className="primary-button" onClick={() => void getSuggestion()} disabled={loading || !allowAdvancedSuggestion}>{loading ? 'Consultando…' : 'Consultar clima y crear look　→'}</button><small>La ubicación se solicita al consultar el clima.</small></div>
+  return <section className="panel weather-stylist"><div className="weather-stylist-copy"><label>Ocasión <select value={occasion} onChange={event => { recommendationRequestId.current = null; setOccasion(event.target.value); }}><option value="">Cualquier ocasión</option><option>Trabajo</option><option>Casual</option><option>Formal</option><option>Evento</option><option>Deporte</option></select></label><button className="primary-button" onClick={() => void getSuggestion()} disabled={loading}>{loading ? 'Consultando…' : 'Consultar clima y crear look　→'}</button><small>La ubicación se solicita al consultar el clima.</small></div>
     {recommendation ? <div className="weather-result"><div className="weather-current"><span>☼</span><b>{Math.round(recommendation.weather.temperature)}°</b><small>{recommendation.weather.label}{recommendation.weather.precipitation > 0 ? ` · ${recommendation.weather.precipitation} mm` : ''}</small></div><div className="recommendation-mode">{recommendation.items.length} prendas</div><p>{recommendation.explanation}</p><div className="recommendation-items">{recommendation.items.map(item => <div key={item.id}>{item.image_url ? <Image src={item.image_url} alt={item.name} width={56} height={62} unoptimized /> : <span>◇</span>}<small>{item.name}</small></div>)}</div><button className="outline-button" onClick={() => void saveAsOutfit()} disabled={saving}>{saving ? 'Guardando…' : 'Guardar como outfit　＋'}</button></div> : <div className="weather-placeholder"><span>☼</span><p>{enabled ? 'Permite la ubicación al consultar para recibir una sugerencia.' : 'Inicia sesión para usar tus prendas.'}</p></div>}
     {error && <p className="garment-notice" role="alert">{error}</p>}{notice && <p className="garment-notice" role="status">{notice}</p>}
   </section>;

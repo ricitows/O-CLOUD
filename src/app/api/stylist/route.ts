@@ -18,11 +18,6 @@ function weatherLabel(code: number) {
   return 'variable';
 }
 
-async function edgeErrorMessage(error: { context?: unknown }) {
-  void error;
-  return 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
-}
-
 export async function POST(request: Request) {
   if (!hasSupabaseConfig()) return NextResponse.json({ error: 'Supabase no está configurado.' }, { status: 503 });
   const supabase = await createClient();
@@ -60,19 +55,18 @@ export async function POST(request: Request) {
   let recommendation: { ids: string[]; explanation: string } = { ids: fallbackPick(garments, weather).map(item => item.id), explanation: 'Una combinación pensada para el clima y la ocasión.' };
   if (!recommendation.ids.length) return NextResponse.json({ error: 'No pudimos generar sugerencias en este momento. Inténtalo más tarde.' }, { status: 503 });
   let source: 'ai' | 'rules' = 'rules';
-  let assistantNotice: string | null = null;
   if (useAi) {
     const { data, error } = await supabase.functions.invoke('garment-assistant', {
       body: { action: 'recommend', request_id: requestId, weather, occasion, allow_paid: true },
     });
-    if (error) assistantNotice = await edgeErrorMessage(error);
+    if (error) { /* Keep the JavaScript fallback without exposing provider details. */ }
     else if (data && Array.isArray(data.garment_ids) && typeof data.explanation === 'string') {
       const owned = new Set((garments as Garment[]).map(item => item.id));
       const validIds = (data.garment_ids as unknown[]).filter((id): id is string => typeof id === 'string' && owned.has(id));
       const ids = [...new Set<string>(validIds)].slice(0, 5);
       if (ids.length) { recommendation = { ids, explanation: data.explanation.slice(0, 300) }; source = 'ai'; }
-      else assistantNotice = 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
-    } else assistantNotice = 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
+      // An unusable response leaves the JavaScript recommendation in place.
+    }
   }
   const selected = (garments as Garment[]).filter(item => recommendation.ids.includes(item.id));
   const items = await Promise.all(selected.map(async item => {
@@ -82,5 +76,5 @@ export async function POST(request: Request) {
       : { url: null, error: 'Esta prenda no tiene una fotografía guardada.' };
     return { id: item.id, name: item.name, category: item.category, subcategory: item.subcategory, color: item.color, image_url: signed.url, image_error: signed.error };
   }));
-  return NextResponse.json({ weather, occasion, source, explanation: recommendation.explanation, items, aiAvailable: true, aiUsed: source === 'ai', assistant_notice: assistantNotice });
+  return NextResponse.json({ weather, occasion, source, explanation: recommendation.explanation, items, aiAvailable: true, aiUsed: source === 'ai' });
 }
