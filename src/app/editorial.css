@@ -225,6 +225,11 @@ a { color: var(--espresso); }
 .garment-fields { gap: 14px; }
 .garment-fields input, .garment-fields select { width: 100%; padding: 0 11px; }
 .upload-actions { gap: 12px; color: var(--muted); font-size: 11px; }
+.garment-save-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 9px; }
+.garment-save-actions .text-button { min-height: 42px; padding: 0 8px; font-size: 10px; }
+.integration-quiet-note { margin: 0 0 12px; color: var(--muted); font-size: 10px; }
+.model-generate-button, .paid-action-button { min-height: 40px; border: 1px solid var(--line); border-radius: 4px; padding: 0 13px; }
+.model-generate-button:hover, .paid-action-button:hover { background: var(--surface-petal); }
 .integration-note, .wide-note { border-radius: 5px; background: #f6e9e7; color: #67443e; font-size: 11px; line-height: 1.65; }
 .garment-notice { border-color: #ead2d0; border-radius: 5px; background: #f9eeeb; color: #68413e; font-size: 12px; line-height: 1.6; }
 .empty-closet { min-height: 360px; border-color: var(--line); border-radius: 8px; background: var(--surface); }
@@ -406,6 +411,8 @@ a { color: var(--espresso); }
   .garment-fields input, .garment-fields select { min-width: 0; min-height: 43px; padding: 0 8px; font-size: 11px; }
   .upload-actions { align-items: stretch; flex-direction: column; font-size: 10px; }
   .upload-actions .primary-button { width: 100%; }
+  .garment-save-actions { width: 100%; flex-direction: column; align-items: stretch; }
+  .garment-save-actions>* { width: 100%; }
   .garment-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .garment-pick { min-height: 130px; padding: 7px; }
   .garment-pick b { font-size: 10px; }
@@ -730,7 +737,7 @@ a { color: var(--espresso); }
   .closet-toolbar-options { justify-content: space-between; }
   .closet-toolbar .filter-select { min-width: 0; flex: 1; font-size: 10px; }
   .closet-toolbar .filter-button { flex: 0 0 auto; min-height: 38px; }
-  .closet-category-rail { gap: 4px; margin-right: -16px; padding-right: 16px; }
+  .closet-category-rail { gap: 4px; margin-right: -15px; padding-right: 15px; }
   .closet-category-rail button { min-height: 32px; padding: 0 10px; font-size: 9px; }
   .garment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 13px; }
   .garment-image { height: clamp(190px, 58vw, 250px); }

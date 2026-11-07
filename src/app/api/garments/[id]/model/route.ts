@@ -6,6 +6,9 @@ type Params = { params: Promise<{ id: string }> };
 type EdgeError = { context?: unknown };
 
 function fail(message: string, status: number) { return NextResponse.json({ error: message }, { status }); }
+function modelResponse(data: { model_url?: unknown } & Record<string, unknown>) {
+  return NextResponse.json(typeof data.model_url === 'string' ? { ...data, url: data.model_url } : data);
+}
 
 async function edgeMessage(error: EdgeError) {
   if (error.context instanceof Response) {
@@ -25,12 +28,14 @@ async function context() {
 export async function POST(request: Request, { params }: Params) {
   const auth = await context(); if ('response' in auth) return auth.response;
   const { id } = await params;
-  let body: { allow_paid?: boolean };
-  try { body = await request.json(); } catch { return fail('Confirma el posible consumo de créditos antes de llamar a Tripo.', 400); }
-  if (body.allow_paid !== true) return fail('Autoriza expresamente esta generación de Tripo antes de continuar.', 400);
-  const { data, error } = await auth.supabase.functions.invoke('generate-3d', { body: { action: 'start', garment_id: id, allow_paid: true } });
+  let body: { request_id?: string };
+  try { body = await request.json(); } catch { return fail('La solicitud no tiene un formato válido.', 400); }
+  const requestId = body.request_id;
+  if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return fail('No se pudo iniciar una solicitud única de modelado.', 400);
+  const { data, error } = await auth.supabase.functions.invoke('generate-3d', { body: { action: 'start', garment_id: id, request_id: requestId } });
   if (error) return fail(await edgeMessage(error), 503);
-  return NextResponse.json(data, { status: data?.status === 'processing' ? 202 : 200 });
+  if (data?.status === 'processing') return NextResponse.json(data, { status: 202 });
+  return modelResponse(data);
 }
 
 export async function GET(_request: Request, { params }: Params) {
@@ -38,5 +43,5 @@ export async function GET(_request: Request, { params }: Params) {
   const { id } = await params;
   const { data, error } = await auth.supabase.functions.invoke('generate-3d', { body: { action: 'status', garment_id: id } });
   if (error) return fail(await edgeMessage(error), 503);
-  return NextResponse.json(data);
+  return modelResponse(data);
 }

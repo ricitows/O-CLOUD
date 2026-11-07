@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { resolveSignedImageUrl, SIGNED_IMAGE_TTL_SECONDS } from '@/lib/images/signed-image';
 import { hasSupabaseConfig } from '@/lib/supabase/env';
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -22,6 +24,27 @@ function hasImageSignature(bytes: Uint8Array, mime: string) {
   if (mime === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (mime === 'image/png') return [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value);
   return bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
+}
+
+async function requestHash(bytes: Uint8Array, outfitId: string, garmentId: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer as ArrayBuffer);
+  const imageHash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+  const input = new TextEncoder().encode(JSON.stringify({ imageHash, outfitId, garmentId }));
+  const hash = await crypto.subtle.digest('SHA-256', input);
+  return [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function updateProcessingJob(admin: ReturnType<typeof createAdminClient>, userId: string, jobId: string, values: {
+  status: 'processing' | 'completed' | 'failed'; providerReference?: string | null; safeError?: string | null; resultPath?: string | null;
+}) {
+  return admin.rpc('update_processing_job', {
+    p_user_id: userId, p_job_id: jobId, p_status: values.status,
+    p_provider_reference: values.providerReference ?? null,
+    p_safe_error: values.safeError ?? null,
+    p_result_path: values.resultPath ?? null,
+    p_result_payload: null,
+    p_garment_id: null,
+  });
 }
 
 export async function POST(request: Request) {
@@ -55,7 +78,7 @@ export async function POST(request: Request) {
   if (garmentError || !garment) return error('No se encontró la prenda en tu Closet.', 404);
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count, error: countError } = await supabase.from('processing_jobs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('job_type', 'virtual_try_on').gte('created_at', since);
+  const { count, error: countError } = await supabase.from('processing_jobs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('job_type', 'virtual_try_on').not('server_reserved_at', 'is', null).gte('created_at', since);
   if (countError) return error('No se pudo comprobar el límite de uso.', 500);
   if ((count || 0) >= DAILY_TRY_ON_LIMIT) return error('Alcanzaste el límite de 3 pruebas virtuales en 24 horas.', 429);
 
@@ -77,8 +100,20 @@ export async function POST(request: Request) {
   const garmentMime = mimeFromPath(garmentPath);
   const garmentDataUrl = `data:${garmentMime};base64,${Buffer.from(garmentBytes).toString('base64')}`;
 
-  const { data: job, error: jobError } = await supabase.from('processing_jobs').insert({ user_id: user.id, job_type: 'virtual_try_on', status: 'processing', garment_id: garmentId }).select('id').single();
-  if (jobError || !job) return error('No se pudo iniciar la prueba virtual.', 500);
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); } catch { return error('No está disponible el registro seguro de la prueba virtual.', 503); }
+  const jobId = crypto.randomUUID();
+  const hash = await requestHash(modelBytes, outfitId, garmentId);
+  const { data: reservation, error: reservationError } = await admin.rpc('reserve_processing_job', {
+    p_user_id: user.id, p_job_id: jobId, p_job_type: 'virtual_try_on', p_garment_id: garmentId, p_request_hash: hash,
+  });
+  if (reservationError || !reservation || reservation.outcome !== 'reserved' || reservation.job?.id !== jobId || !reservation.job?.server_reserved_at) {
+    if (reservation?.outcome === 'daily_limit') return error('Alcanzaste el límite de 3 pruebas virtuales en 24 horas.', 429);
+    return error('No se pudo reservar de forma segura la prueba virtual.', 503);
+  }
+  const job = reservation.job;
+  const { error: beginError } = await updateProcessingJob(admin, user.id, jobId, { status: 'processing' });
+  if (beginError) return error('No se pudo registrar el inicio. FASHN no recibió la fotografía.', 503);
   try {
     const run = await fetch('https://api.fashn.ai/v1/run', {
       method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -89,10 +124,12 @@ export async function POST(request: Request) {
     if (!run.ok || typeof data.id !== 'string') throw new Error('El proveedor no aceptó la solicitud.');
     const { data: created, error: createError } = await supabase.from('virtual_try_ons').insert({ user_id: user.id, outfit_id: outfitId, garment_id: garmentId, provider_reference: data.id, status: 'processing', consented_at: new Date().toISOString() }).select('id,status').single();
     if (createError || !created) throw new Error('No se pudo registrar la prueba en tu cuenta.');
-    await supabase.from('processing_jobs').update({ provider_reference: data.id }).eq('id', job.id).eq('user_id', user.id);
+    const { error: refError } = await updateProcessingJob(admin, user.id, job.id, { status: 'processing', providerReference: data.id });
+    if (refError) return NextResponse.json({ error: 'FASHN inició la prueba, pero no se pudo guardar su referencia. Conserva este identificador y consulta el resultado antes de reintentar.', id: created.id }, { status: 503 });
     return NextResponse.json({ id: created.id, status: created.status }, { status: 202 });
   } catch (cause) {
-    await supabase.from('processing_jobs').update({ status: 'failed', safe_error: cause instanceof Error ? cause.message.slice(0, 200) : 'No se pudo iniciar el servicio.' }).eq('id', job.id).eq('user_id', user.id);
+    const { error: persistError } = await updateProcessingJob(admin, user.id, job.id, { status: 'failed', safeError: 'No se pudo iniciar la prueba virtual.' });
+    if (persistError) return error('FASHN no pudo completar la solicitud y no se pudo registrar el estado. No la reenvíes hasta consultar si existe una prueba previa.', 503);
     return error(cause instanceof Error ? cause.message : 'No se pudo iniciar la prueba virtual.', 502);
   }
 }
@@ -123,12 +160,23 @@ export async function GET(request: Request) {
       } else if (data.status === 'failed') status = 'failed';
       else if (['starting', 'in_queue', 'processing'].includes(data.status)) status = 'processing';
       else return error('El proveedor devolvió un estado desconocido.', 502);
-      await supabase.from('virtual_try_ons').update({ status, result_path: resultPath }).eq('id', record.id).eq('user_id', user.id);
-      await supabase.from('processing_jobs').update({ status: status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'processing' }).eq('provider_reference', record.provider_reference).eq('user_id', user.id).eq('job_type', 'virtual_try_on');
+      const { error: resultUpdateError } = await supabase.from('virtual_try_ons').update({ status, result_path: resultPath }).eq('id', record.id).eq('user_id', user.id);
+      if (resultUpdateError) return error('No se pudo guardar el estado privado de la prueba virtual.', 500);
+      const { data: job, error: jobLookupError } = await supabase.from('processing_jobs').select('id').eq('provider_reference', record.provider_reference).eq('user_id', user.id).eq('job_type', 'virtual_try_on').not('server_reserved_at', 'is', null).maybeSingle();
+      if (jobLookupError) return error('No se pudo consultar el estado interno de la prueba.', 500);
+      if (job) {
+        const admin = createAdminClient();
+        const { error: jobUpdateError } = await updateProcessingJob(admin, user.id, job.id, { status: status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'processing', resultPath });
+        if (jobUpdateError) return error('El resultado está disponible, pero no se pudo registrar el estado interno. Consulta de nuevo antes de reintentar.', 503);
+      }
     } catch { return error('No se pudo consultar el resultado del probador.', 502); }
   }
-  const { data: signed } = resultPath ? await supabase.storage.from('private-photos').createSignedUrl(resultPath, 30 * 60) : { data: null };
-  return NextResponse.json({ id: record.id, status, result_url: signed?.signedUrl ?? null });
+  if (resultPath) {
+    const signed = await resolveSignedImageUrl(() => supabase.storage.from('private-photos').createSignedUrl(resultPath, SIGNED_IMAGE_TTL_SECONDS));
+    if (!signed.url) return error(signed.error || 'El resultado está guardado, pero no se pudo preparar su enlace privado. Vuelve a consultar el resultado.', 503);
+    return NextResponse.json({ id: record.id, status, result_url: signed.url });
+  }
+  return NextResponse.json({ id: record.id, status, result_url: null });
 }
 
 export async function DELETE(request: Request) {

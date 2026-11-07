@@ -34,14 +34,13 @@ async function downloadOwnPhoto(supabase: Awaited<ReturnType<typeof createClient
   return { bytes: Buffer.from(await data.arrayBuffer()), httpStatus: 200 };
 }
 
-async function removeBackground(supabase: Awaited<ReturnType<typeof createClient>>, photo: Photo) {
+async function removeBackground(supabase: Awaited<ReturnType<typeof createClient>>, photo: Photo, processingJobId: string) {
   const format = (await sharp(photo.bytes).metadata()).format;
   const mime = format === 'jpeg' ? 'image/jpeg' : format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : null;
   if (!mime) throw new Error('Formato de imagen no compatible para quitar el fondo.');
   const form = new FormData();
   form.set('image', new Blob([new Uint8Array(photo.bytes)], { type: mime }), `${photo.garment.id}.${format}`);
-  form.set('allow_paid_processing', 'yes');
-  form.set('processing_job_id', crypto.randomUUID());
+  form.set('processing_job_id', processingJobId);
   const { data, error } = await supabase.functions.invoke('remove-background', { body: form });
   if (error || !(data instanceof Blob) || !data.type.toLowerCase().includes('image/png')) {
     const context = error?.context;
@@ -59,6 +58,15 @@ async function removeBackground(supabase: Awaited<ReturnType<typeof createClient
   const result = Buffer.from(await data.arrayBuffer());
   if (!(await hasRealTransparency(result))) throw new Error('El resultado no tiene transparencia válida. No se creó el collage para evitar mostrar la foto con su fondo.');
   return result;
+}
+
+async function collageProcessingJobId(requestId: string, garmentId: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${requestId}:${garmentId}`));
+  const bytes = new Uint8Array(digest).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
 
 export async function POST(request: Request) {
@@ -79,11 +87,12 @@ export async function POST(request: Request) {
     logCollage(requestId, stage, { authenticated: true });
 
     stage = 'request_body';
-    let body: { outfit_id?: unknown; allow_clipdrop?: unknown; diagnostic_mode?: unknown };
+    let body: { outfit_id?: unknown; request_id?: unknown; diagnostic_mode?: unknown };
     try { body = await request.json(); } catch { return NextResponse.json({ error: 'La solicitud no es válida.' }, { status: 400 }); }
     if (typeof body.outfit_id !== 'string' || !UUID.test(body.outfit_id)) return NextResponse.json({ error: 'Selecciona un outfit válido.' }, { status: 400 });
+    const processingRequestId = typeof body.request_id === 'string' && UUID.test(body.request_id) ? body.request_id : crypto.randomUUID();
     const diagnosticMode = body.diagnostic_mode === true;
-    const allowClipdrop = !diagnosticMode && body.allow_clipdrop === true;
+    const allowClipdrop = !diagnosticMode;
     logCollage(requestId, stage, { validOutfitId: true, allowClipdrop, diagnosticMode });
 
     stage = 'outfit_lookup';
@@ -148,19 +157,11 @@ export async function POST(request: Request) {
 
     const opaque = photos.filter(photo => !photo.transparent);
     logCollage(requestId, 'transparency_check', { photoCount: photos.length, opaqueCount: opaque.length, allowClipdrop, diagnosticMode });
-    if (opaque.length && !allowClipdrop && !diagnosticMode) {
-      logCollage(requestId, 'background_removal_consent_required', { opaqueCount: opaque.length });
-      return NextResponse.json({
-        code: 'background_removal_required',
-        error: `No se creó el collage: ${opaque.length === 1 ? 'una fotografía conserva' : 'algunas fotografías conservan'} el fondo original. Para aislarlas, Clipdrop tendría que recibir ${opaque.length === 1 ? 'esa foto' : 'esas fotos'} y puede consumir créditos o generar cargos.`,
-      }, { status: 422 });
-    }
-
     if (opaque.length && allowClipdrop) {
       try {
         stage = 'clipdrop_remove_background';
         for (const [index, photo] of opaque.entries()) {
-          photo.bytes = await removeBackground(supabase, photo);
+          photo.bytes = await removeBackground(supabase, photo, await collageProcessingJobId(processingRequestId, photo.garment.id));
           logCollage(requestId, 'clipdrop_result', { garmentIndex: index + 1, bytes: photo.bytes.length, transparent: true });
         }
       } catch (error) {

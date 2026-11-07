@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { hasSupabaseConfig } from '@/lib/supabase/env';
+import { fallbackPick } from '@/lib/stylist/fallback';
+import { resolveSignedImageUrl, SIGNED_IMAGE_TTL_SECONDS } from '@/lib/images/signed-image';
 
 type Garment = { id: string; name: string; category: string; subcategory: string | null; color: string | null; is_favorite: boolean; original_path: string | null; processed_path: string | null };
 type Weather = { temperature: number; apparentTemperature: number; precipitation: number; code: number; label: string };
@@ -14,29 +16,6 @@ function weatherLabel(code: number) {
   if ([71, 73, 75, 77, 85, 86].includes(code)) return 'nieve';
   if ([95, 96, 99].includes(code)) return 'tormenta';
   return 'variable';
-}
-
-function fallbackPick(garments: Garment[], weather: Weather) {
-  const favoritesFirst = [...garments].sort((a, b) => Number(b.is_favorite) - Number(a.is_favorite));
-  const choose = (predicate: (item: Garment) => boolean) => favoritesFirst.find(predicate);
-  const complete = choose(item => item.category === 'Prendas completas');
-  const selected: Garment[] = [];
-  if (complete) selected.push(complete);
-  else {
-    const layers = weather.temperature < 16 ? ['Abrigos', 'Chamarras', 'Suéteres', 'Cárdigans', 'Blusas', 'Camisas', 'Playeras', 'Tops'] : ['Playeras', 'Blusas', 'Camisas', 'Tops', 'Suéteres', 'Cárdigans', 'Chamarras', 'Abrigos'];
-    const top = choose(item => item.category === 'Parte superior' && (!item.subcategory || layers.includes(item.subcategory))) || choose(item => item.category === 'Parte superior');
-    const bottom = choose(item => item.category === 'Parte inferior');
-    if (top) selected.push(top);
-    if (bottom) selected.push(bottom);
-  }
-  const shoes = choose(item => item.category === 'Calzado');
-  const accessory = choose(item => item.category === 'Accesorios');
-  if (shoes && selected.length < 4) selected.push(shoes);
-  if (accessory && (weather.precipitation > 0 || weather.temperature < 12) && selected.length < 4) selected.push(accessory);
-  if (selected.length < 2) {
-    for (const item of favoritesFirst) if (!selected.some(existing => existing.id === item.id) && selected.length < 3) selected.push(item);
-  }
-  return selected;
 }
 
 async function edgeErrorMessage(error: { context?: unknown }) {
@@ -55,8 +34,11 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'La solicitud no tiene un formato válido.' }, { status: 400 }); }
   const latitude = Number(body.latitude); const longitude = Number(body.longitude);
   const occasion = typeof body.occasion === 'string' ? body.occasion.trim().slice(0, 80) : '';
-  const useAi = body.use_ai === true;
-  if (useAi && body.confirm_ai_cost !== true) return NextResponse.json({ error: 'Confirma expresamente el posible costo de OpenAI para esta recomendación.' }, { status: 400 });
+  const allowPaid = process.env.NODE_ENV === 'development' || body.allow_paid === true;
+  if (!allowPaid) return NextResponse.json({ error: 'Autoriza OpenAI desde la interfaz para usar la recomendación avanzada.' }, { status: 403 });
+  const useAi = true;
+  const requestId = body.request_id;
+  if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return NextResponse.json({ error: 'No se pudo iniciar una solicitud única de recomendación.' }, { status: 400 });
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
     return NextResponse.json({ error: 'Comparte tu ubicación desde el dispositivo para consultar el clima.' }, { status: 400 });
   }
@@ -82,7 +64,7 @@ export async function POST(request: Request) {
   let assistantNotice: string | null = null;
   if (useAi) {
     const { data, error } = await supabase.functions.invoke('garment-assistant', {
-      body: { action: 'recommend', allow_paid: true, weather, occasion },
+      body: { action: 'recommend', request_id: requestId, weather, occasion, allow_paid: true },
     });
     if (error) assistantNotice = await edgeErrorMessage(error);
     else if (data && Array.isArray(data.garment_ids) && typeof data.explanation === 'string') {
@@ -96,8 +78,10 @@ export async function POST(request: Request) {
   const selected = (garments as Garment[]).filter(item => recommendation.ids.includes(item.id));
   const items = await Promise.all(selected.map(async item => {
     const path = item.processed_path || item.original_path;
-    const { data } = path ? await supabase.storage.from('garments').createSignedUrl(path, 30 * 60) : { data: null };
-    return { id: item.id, name: item.name, category: item.category, subcategory: item.subcategory, color: item.color, image_url: data?.signedUrl ?? null };
+    const signed = path
+      ? await resolveSignedImageUrl(() => supabase.storage.from('garments').createSignedUrl(path, SIGNED_IMAGE_TTL_SECONDS))
+      : { url: null, error: 'Esta prenda no tiene una fotografía guardada.' };
+    return { id: item.id, name: item.name, category: item.category, subcategory: item.subcategory, color: item.color, image_url: signed.url, image_error: signed.error };
   }));
   return NextResponse.json({ weather, occasion, source, explanation: recommendation.explanation, items, aiAvailable: true, aiUsed: source === 'ai', assistant_notice: assistantNotice });
 }

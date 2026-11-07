@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { hasSupabaseConfig } from '@/lib/supabase/env';
+import { resolveSignedImageUrl, SIGNED_IMAGE_TTL_SECONDS } from '@/lib/images/signed-image';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -39,8 +40,10 @@ export async function GET() {
       const garment = itemById.get(link.garment_id);
       if (!garment) return null;
       const path = garment.processed_path || garment.original_path;
-      const { data } = path ? await supabase.storage.from('garments').createSignedUrl(path, 30 * 60) : { data: null };
-      return { id: garment.id, name: garment.name, category: garment.category, color: garment.color, image_url: data?.signedUrl ?? null };
+      const signed = path
+        ? await resolveSignedImageUrl(() => supabase.storage.from('garments').createSignedUrl(path, SIGNED_IMAGE_TTL_SECONDS))
+        : { url: null, error: 'Esta prenda no tiene una fotografía guardada.' };
+      return { id: garment.id, name: garment.name, category: garment.category, color: garment.color, image_url: signed.url, image_error: signed.error };
     }));
     return { ...outfit, items: items.filter(Boolean) };
   }));

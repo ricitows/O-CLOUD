@@ -1,10 +1,12 @@
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
+import nextPlugin from '@next/eslint-plugin-next';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 const eslintConfig = [
   { ignores: ['.next/**', '.next-dev/**', '.next-output/**', 'node_modules/**', 'next-env.d.ts'] },
+  nextPlugin.flatConfig.recommended,
   {
     files: ['**/*.{js,mjs,ts,tsx}'],
     languageOptions: { parserOptions: { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true } } },

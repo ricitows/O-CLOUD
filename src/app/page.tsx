@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Dashboard from './Dashboard';
 import { createClient } from '@/lib/supabase/server';
 import { hasSupabaseConfig } from '@/lib/supabase/env';
+import { resolveSignedImageUrl, SIGNED_IMAGE_TTL_SECONDS } from '@/lib/images/signed-image';
 
 export default async function HomePage({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string }> }) {
   const params = await searchParams;
@@ -14,9 +15,9 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
 
   const { data: profile } = await supabase.from('profiles').select('display_name,username,avatar_path').eq('id', user.id).maybeSingle();
   const avatarPath = profile?.avatar_path?.startsWith(`${user.id}/avatars/`) ? profile.avatar_path : null;
-  const { data: avatarImage } = avatarPath
-    ? await supabase.storage.from('private-photos').createSignedUrl(avatarPath, 30 * 60)
-    : { data: null };
+  const avatarImage = avatarPath
+    ? await resolveSignedImageUrl(() => supabase.storage.from('private-photos').createSignedUrl(avatarPath, SIGNED_IMAGE_TTL_SECONDS))
+    : { url: null, error: null };
   const { count: garmentCount } = await supabase.from('garments').select('id', { count: 'exact', head: true }).eq('user_id', user.id);
   const { count: outfitCount } = await supabase.from('outfits').select('id', { count: 'exact', head: true }).eq('user_id', user.id);
   const today = new Date().toISOString().slice(0, 10);
@@ -38,8 +39,10 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     const garment = byId.get(link.garment_id);
     if (!garment) return null;
     const imagePath = garment.processed_path || garment.original_path;
-    const { data } = imagePath ? await supabase.storage.from('garments').createSignedUrl(imagePath, 30 * 60) : { data: null };
-    return { outfit_id: link.outfit_id, item: { id: garment.id, name: garment.name, category: garment.category, image_url: data?.signedUrl ?? null } };
+    const signed = imagePath
+      ? await resolveSignedImageUrl(() => supabase.storage.from('garments').createSignedUrl(imagePath, SIGNED_IMAGE_TTL_SECONDS))
+      : { url: null, error: 'Esta prenda no tiene una fotografía guardada.' };
+    return { outfit_id: link.outfit_id, item: { id: garment.id, name: garment.name, category: garment.category, image_url: signed.url, image_error: signed.error } };
   }));
   const itemsByOutfit = new Map<string, NonNullable<(typeof outfitItems)[number]>['item'][] >();
   for (const entry of outfitItems) {
@@ -48,5 +51,5 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   }
   const recentOutfits = outfitRecords.map(outfit => ({ ...outfit, items: itemsByOutfit.get(outfit.id) ?? [] }));
   const featuredOutfit = featuredOutfitRecord ? { ...featuredOutfitRecord, items: itemsByOutfit.get(featuredOutfitRecord.id) ?? [] } : undefined;
-  return <Dashboard displayName={profile?.display_name || user.user_metadata?.display_name || ''} username={profile?.username || ''} avatarUrl={avatarImage?.signedUrl || ''} email={user.email || ''} garmentCount={garmentCount ?? 0} outfitCount={outfitCount || 0} nextOutfit={nextEntry && nextOutfit ? { name: nextOutfit.name, date: nextEntry.outfit_date } : undefined} featuredOutfit={featuredOutfit} recentOutfits={recentOutfits} supabaseConfigured processorAvailable={supabaseConfigured} tripoAvailable={supabaseConfigured} authError={params.error} authNotice={params.notice} />;
+  return <Dashboard displayName={profile?.display_name || user.user_metadata?.display_name || ''} username={profile?.username || ''} avatarUrl={avatarImage.url || ''} avatarImageError={avatarImage.error || ''} email={user.email || ''} garmentCount={garmentCount ?? 0} outfitCount={outfitCount || 0} nextOutfit={nextEntry && nextOutfit ? { name: nextOutfit.name, date: nextEntry.outfit_date } : undefined} featuredOutfit={featuredOutfit} recentOutfits={recentOutfits} supabaseConfigured tripoAvailable={supabaseConfigured} authError={params.error} authNotice={params.notice} />;
 }
