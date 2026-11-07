@@ -48,12 +48,9 @@ async function removeBackground(supabase: Awaited<ReturnType<typeof createClient
       const status = context.status;
       let message = '';
       try { const payload = await context.clone().json(); if (typeof payload.error === 'string') message = payload.error; } catch { /* use a safe status message */ }
-      if (message) throw new Error(message);
-      if (status === 402) throw new Error('Clipdrop no tiene créditos disponibles para quitar el fondo. Puedes subir una imagen con fondo transparente.');
-      if (status === 429) throw new Error('Se alcanzó el límite de procesamiento de Clipdrop. Inténtalo más tarde o sube una imagen transparente.');
-      if (status === 503) throw new Error('Clipdrop no está configurado en Supabase. No se procesó esta fotografía.');
+      if (message || [402, 429, 503].includes(status)) throw new Error('No pudimos preparar los fondos para esta composición. Inténtalo más tarde o usa la vista gratuita.');
     }
-    throw new Error('Clipdrop no pudo quitar el fondo. Puedes subir una imagen con fondo transparente e intentarlo de nuevo.');
+    throw new Error('No pudimos preparar los fondos para esta composición. Inténtalo más tarde o usa la vista gratuita.');
   }
   const result = Buffer.from(await data.arrayBuffer());
   if (!(await hasRealTransparency(result))) throw new Error('El resultado no tiene transparencia válida. No se creó el collage para evitar mostrar la foto con su fondo.');
@@ -87,7 +84,7 @@ export async function POST(request: Request) {
     logCollage(requestId, stage, { authenticated: true });
 
     stage = 'request_body';
-    let body: { outfit_id?: unknown; request_id?: unknown; diagnostic_mode?: unknown };
+    let body: { outfit_id?: unknown; request_id?: unknown; diagnostic_mode?: unknown; allow_paid?: unknown };
     try { body = await request.json(); } catch { return NextResponse.json({ error: 'La solicitud no es válida.' }, { status: 400 }); }
     if (typeof body.outfit_id !== 'string' || !UUID.test(body.outfit_id)) return NextResponse.json({ error: 'Selecciona un outfit válido.' }, { status: 400 });
     const processingRequestId = typeof body.request_id === 'string' && UUID.test(body.request_id) ? body.request_id : crypto.randomUUID();
@@ -158,6 +155,7 @@ export async function POST(request: Request) {
     const opaque = photos.filter(photo => !photo.transparent);
     logCollage(requestId, 'transparency_check', { photoCount: photos.length, opaqueCount: opaque.length, allowClipdrop, diagnosticMode });
     if (opaque.length && allowClipdrop) {
+      if (body.allow_paid !== true) return NextResponse.json({ error: 'Autoriza el procesamiento externo para recortar los fondos, o elige la vista gratuita.' }, { status: 403 });
       try {
         stage = 'clipdrop_remove_background';
         for (const [index, photo] of opaque.entries()) {
@@ -166,7 +164,7 @@ export async function POST(request: Request) {
         }
       } catch (error) {
         logCollage(requestId, stage + '_failed', { errorType: error instanceof Error ? error.name : 'unknown' });
-        return NextResponse.json({ error: error instanceof Error ? error.message : 'No se pudo quitar el fondo. Sube imágenes con transparencia para continuar.' }, { status: 502 });
+        return NextResponse.json({ error: 'No pudimos preparar los fondos para esta composición. Inténtalo más tarde o usa la vista gratuita.' }, { status: 502 });
       }
     }
 

@@ -50,7 +50,7 @@ async function updateProcessingJob(admin: ReturnType<typeof createAdminClient>, 
 export async function POST(request: Request) {
   const auth = await getAuth(); if ('response' in auth) return auth.response;
   const apiKey = process.env.FASHN_API_KEY;
-  if (!apiKey) return error('El probador virtual no está conectado. Configura FASHN_API_KEY en el servidor.', 503);
+  if (!apiKey) return error('El probador virtual no está disponible por ahora.', 503);
   const size = Number(request.headers.get('content-length') || 0);
   if (size > MAX_IMAGE_SIZE + 64 * 1024) return error('La fotografía supera el límite de 10 MB.', 413);
   let form: FormData;
@@ -60,8 +60,8 @@ export async function POST(request: Request) {
   const garmentId = String(form.get('garment_id') || '');
   const consent = form.get('consent') === 'yes';
   const allowPaid = form.get('allow_paid') === 'yes';
-  if (!allowPaid) return error('Autoriza expresamente esta llamada a FASHN, que puede consumir créditos, antes de continuar.', 400);
-  if (!consent) return error('Confirma que tienes autorización para usar esta fotografía y enviarla al proveedor de IA.', 400);
+  if (!allowPaid) return error('Autoriza el procesamiento externo, que puede generar costos, antes de continuar.', 400);
+  if (!consent) return error('Confirma que tienes autorización para usar esta fotografía y enviarla al procesamiento externo.', 400);
   if (!(modelImage instanceof File) || !IMAGE_MIME.has(modelImage.type) || modelImage.size <= 0 || modelImage.size > MAX_IMAGE_SIZE) return error('Elige una foto JPG, PNG o WEBP de hasta 10 MB.', 400);
   if (!outfitId || !garmentId) return error('Elige un outfit guardado y una prenda de ese outfit.', 400);
   const modelBytes = new Uint8Array(await modelImage.arrayBuffer());
@@ -85,10 +85,10 @@ export async function POST(request: Request) {
   let providerBalance = 0;
   try {
     const balance = await fetch('https://api.fashn.ai/v1/credits', { headers: { authorization: `Bearer ${apiKey}` }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
-    if (!balance.ok) return error('No se pudo comprobar el saldo del proveedor. Revisa su cuenta e inténtalo de nuevo.', 503);
+    if (!balance.ok) return error('El probador virtual no está disponible por ahora. Inténtalo más tarde.', 503);
     const data = await balance.json(); providerBalance = Number(data.credits?.total || 0);
-  } catch { return error('No se pudo conectar con el proveedor del probador.', 502); }
-  if (providerBalance < 1) return error('La cuenta FASHN no tiene créditos disponibles.', 402);
+  } catch { return error('El probador virtual no está disponible por ahora. Inténtalo más tarde.', 502); }
+  if (providerBalance < 1) return error('El probador virtual no está disponible por ahora.', 402);
 
   const garmentPath = garment.processed_path || garment.original_path;
   if (!garmentPath) return error('La prenda no tiene una imagen disponible.', 409);
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
   }
   const job = reservation.job;
   const { error: beginError } = await updateProcessingJob(admin, user.id, jobId, { status: 'processing' });
-  if (beginError) return error('No se pudo registrar el inicio. FASHN no recibió la fotografía.', 503);
+  if (beginError) return error('No se pudo registrar el inicio. No se envió la fotografía.', 503);
   try {
     const run = await fetch('https://api.fashn.ai/v1/run', {
       method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -121,16 +121,17 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(30_000),
     });
     const data = await run.json();
-    if (!run.ok || typeof data.id !== 'string') throw new Error('El proveedor no aceptó la solicitud.');
+    if (!run.ok || typeof data.id !== 'string') throw new Error('No se pudo completar esta solicitud.');
     const { data: created, error: createError } = await supabase.from('virtual_try_ons').insert({ user_id: user.id, outfit_id: outfitId, garment_id: garmentId, provider_reference: data.id, status: 'processing', consented_at: new Date().toISOString() }).select('id,status').single();
     if (createError || !created) throw new Error('No se pudo registrar la prueba en tu cuenta.');
     const { error: refError } = await updateProcessingJob(admin, user.id, job.id, { status: 'processing', providerReference: data.id });
-    if (refError) return NextResponse.json({ error: 'FASHN inició la prueba, pero no se pudo guardar su referencia. Conserva este identificador y consulta el resultado antes de reintentar.', id: created.id }, { status: 503 });
+    if (refError) return NextResponse.json({ error: 'El procesamiento inició, pero no se pudo guardar su referencia. Conserva este identificador y consulta el resultado antes de reintentar.', id: created.id }, { status: 503 });
     return NextResponse.json({ id: created.id, status: created.status }, { status: 202 });
   } catch (cause) {
     const { error: persistError } = await updateProcessingJob(admin, user.id, job.id, { status: 'failed', safeError: 'No se pudo iniciar la prueba virtual.' });
-    if (persistError) return error('FASHN no pudo completar la solicitud y no se pudo registrar el estado. No la reenvíes hasta consultar si existe una prueba previa.', 503);
-    return error(cause instanceof Error ? cause.message : 'No se pudo iniciar la prueba virtual.', 502);
+    if (persistError) return error('No se pudo registrar el estado. No reenvíes la solicitud hasta consultar si existe una prueba previa.', 503);
+    void cause;
+    return error('No se pudo iniciar la prueba virtual. Inténtalo más tarde.', 502);
   }
 }
 
@@ -146,11 +147,11 @@ export async function GET(request: Request) {
   if (status === 'processing' && record.provider_reference && process.env.FASHN_API_KEY) {
     try {
       const response = await fetch(`https://api.fashn.ai/v1/status/${encodeURIComponent(record.provider_reference)}`, { headers: { authorization: `Bearer ${process.env.FASHN_API_KEY}` }, cache: 'no-store', signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) return error('El proveedor no respondió al revisar el estado.', 502);
+      if (!response.ok) return error('No se pudo consultar el estado del probador virtual.', 502);
       const data = await response.json();
       if (data.status === 'completed' && Array.isArray(data.output) && typeof data.output[0] === 'string') {
         const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(data.output[0]);
-        if (!match) return error('El proveedor devolvió un resultado no válido.', 502);
+        if (!match) return error('No se pudo validar el resultado del probador virtual.', 502);
         const bytes = Buffer.from(match[1], 'base64');
         if (bytes.length > MAX_IMAGE_SIZE || !hasImageSignature(new Uint8Array(bytes), 'image/jpeg')) return error('La imagen generada no pasó la validación.', 502);
         resultPath = `${user.id}/try-on/${record.id}.jpg`;
@@ -159,7 +160,7 @@ export async function GET(request: Request) {
         status = 'completed';
       } else if (data.status === 'failed') status = 'failed';
       else if (['starting', 'in_queue', 'processing'].includes(data.status)) status = 'processing';
-      else return error('El proveedor devolvió un estado desconocido.', 502);
+      else return error('El probador virtual devolvió un estado no válido.', 502);
       const { error: resultUpdateError } = await supabase.from('virtual_try_ons').update({ status, result_path: resultPath }).eq('id', record.id).eq('user_id', user.id);
       if (resultUpdateError) return error('No se pudo guardar el estado privado de la prueba virtual.', 500);
       const { data: job, error: jobLookupError } = await supabase.from('processing_jobs').select('id').eq('provider_reference', record.provider_reference).eq('user_id', user.id).eq('job_type', 'virtual_try_on').not('server_reserved_at', 'is', null).maybeSingle();

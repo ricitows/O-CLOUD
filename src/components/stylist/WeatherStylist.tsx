@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useRef, useState } from 'react';
 import { useSignedImageRenewal } from '@/lib/images/use-signed-image-renewal';
 
-const localProviderAutomation = process.env.NODE_ENV === 'development';
-
 type Recommendation = {
   weather: { temperature: number; apparentTemperature: number; precipitation: number; label: string };
   source: 'ai' | 'rules';
@@ -24,7 +22,7 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [allowOpenAI, setAllowOpenAI] = useState(false);
+  const [allowAdvancedSuggestion, setAllowAdvancedSuggestion] = useState(false);
   const recommendationRequestId = useRef<string | null>(null);
   const refreshRecommendationImages = useCallback(async () => {
     if (!enabled || !recommendation) return;
@@ -45,9 +43,9 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
   }, [enabled, recommendation]);
   useSignedImageRenewal(refreshRecommendationImages, enabled && Boolean(recommendation));
   async function getSuggestion() {
-    if (!localProviderAutomation && !allowOpenAI) { setError('Autoriza OpenAI antes de solicitar una recomendación avanzada.'); return; }
+    if (!allowAdvancedSuggestion) { setError('Autoriza la recomendación avanzada para continuar.'); return; }
     setError(''); setNotice(''); setRecommendation(null);
-    if (!localProviderAutomation) setAllowOpenAI(false);
+    setAllowAdvancedSuggestion(false);
     if (!enabled) { setError('Conecta Supabase para consultar tus prendas.'); return; }
     if (!navigator.geolocation) { setError('Este dispositivo no permite compartir la ubicación.'); return; }
     setLoading(true);
@@ -55,13 +53,13 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
       try {
         const requestId = recommendationRequestId.current || crypto.randomUUID();
         recommendationRequestId.current = requestId;
-        const response = await fetch('/api/stylist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, occasion, request_id: requestId, allow_paid: localProviderAutomation || allowOpenAI }) });
+        const response = await fetch('/api/stylist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, occasion, request_id: requestId, allow_paid: true }) });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'No se pudo crear la sugerencia.');
         recommendationRequestId.current = null;
         setRecommendation(body);
-        setNotice(body.assistant_notice || '');
-      } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear la sugerencia.'); }
+        setNotice(body.assistant_notice || (body.source === 'rules' ? 'Preparamos una sugerencia alternativa con prendas de tu Closet.' : ''));
+      } catch { setError('No pudimos generar sugerencias en este momento. Inténtalo más tarde.'); }
       finally { setLoading(false); }
     }, reason => {
       setLoading(false);
@@ -81,7 +79,7 @@ export default function WeatherStylist({ enabled }: { enabled: boolean }) {
     finally { setSaving(false); }
   }
 
-  return <section className="panel weather-stylist"><div className="weather-stylist-copy"><label>Ocasión <select value={occasion} onChange={event => { recommendationRequestId.current = null; setAllowOpenAI(false); setOccasion(event.target.value); }}><option value="">Cualquier ocasión</option><option>Trabajo</option><option>Casual</option><option>Formal</option><option>Evento</option><option>Deporte</option></select></label>{!localProviderAutomation && <label className="paid-opt-in"><input type="checkbox" checked={allowOpenAI} onChange={event => setAllowOpenAI(event.target.checked)} />Autoriza OpenAI para generar la recomendación y consumir créditos. Sin autorización, usa la recomendación por reglas.</label>}<button className="primary-button" onClick={() => void getSuggestion()} disabled={loading || (!localProviderAutomation && !allowOpenAI)}>{loading ? 'Consultando…' : 'Consultar clima y crear look　→'}</button><small>La ubicación se solicita al consultar el clima.</small></div>
+  return <section className="panel weather-stylist"><div className="weather-stylist-copy"><label>Ocasión <select value={occasion} onChange={event => { recommendationRequestId.current = null; setAllowAdvancedSuggestion(false); setOccasion(event.target.value); }}><option value="">Cualquier ocasión</option><option>Trabajo</option><option>Casual</option><option>Formal</option><option>Evento</option><option>Deporte</option></select></label><label className="paid-opt-in"><input type="checkbox" checked={allowAdvancedSuggestion} onChange={event => setAllowAdvancedSuggestion(event.target.checked)} />Autorizo el procesamiento externo, que puede generar costos, para preparar una recomendación avanzada. Sin autorización, puedes seguir usando las sugerencias habituales.</label><button className="primary-button" onClick={() => void getSuggestion()} disabled={loading || !allowAdvancedSuggestion}>{loading ? 'Consultando…' : 'Consultar clima y crear look　→'}</button><small>La ubicación se solicita al consultar el clima.</small></div>
     {recommendation ? <div className="weather-result"><div className="weather-current"><span>☼</span><b>{Math.round(recommendation.weather.temperature)}°</b><small>{recommendation.weather.label}{recommendation.weather.precipitation > 0 ? ` · ${recommendation.weather.precipitation} mm` : ''}</small></div><div className="recommendation-mode">{recommendation.items.length} prendas</div><p>{recommendation.explanation}</p><div className="recommendation-items">{recommendation.items.map(item => <div key={item.id}>{item.image_url ? <Image src={item.image_url} alt={item.name} width={56} height={62} unoptimized /> : <span>◇</span>}<small>{item.name}</small></div>)}</div><button className="outline-button" onClick={() => void saveAsOutfit()} disabled={saving}>{saving ? 'Guardando…' : 'Guardar como outfit　＋'}</button></div> : <div className="weather-placeholder"><span>☼</span><p>{enabled ? 'Permite la ubicación al consultar para recibir una sugerencia.' : 'Inicia sesión para usar tus prendas.'}</p></div>}
     {error && <p className="garment-notice" role="alert">{error}</p>}{notice && <p className="garment-notice" role="status">{notice}</p>}
   </section>;

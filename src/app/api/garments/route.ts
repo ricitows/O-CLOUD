@@ -34,10 +34,8 @@ async function attachProcessingJob(supabase: Awaited<ReturnType<typeof createCli
   return { found: true, error: error ?? (!data ? new Error('Processing job update was not persisted') : null) };
 }
 async function edgeErrorMessage(error: { context?: unknown }) {
-  if (error.context instanceof Response) {
-    try { const payload = await error.context.clone().json(); if (typeof payload.error === 'string') return payload.error; } catch { /* use deployment hint below */ }
-  }
-  return 'La función remove-background no está desplegada o no responde. Se guardará la imagen original.';
+  void error;
+  return 'La prenda se guardó. La imagen original se conserva.';
 }
 
 function unavailable() {
@@ -149,9 +147,9 @@ export async function POST(request: Request) {
   // return above without starting Clipdrop or consuming its quota.
   let processedBytes: Uint8Array | null = null;
   let processingWarning: string | null = null;
-  const allowClipdrop = process.env.NODE_ENV === 'development' || form.get('allow_paid') === 'yes';
+  const allowClipdrop = form.get('allow_paid') === 'yes';
   if (!allowClipdrop) {
-    processingWarning = 'Se guardó la fotografía original. Autoriza Clipdrop si quieres quitar el fondo.';
+    processingWarning = 'La prenda se guardó. La imagen original se conserva.';
   } else {
     const providerForm = new FormData();
     providerForm.set('image', file, file.name || 'garment');
@@ -162,12 +160,12 @@ export async function POST(request: Request) {
     else if (data && typeof data === 'object' && 'status' in data && data.status === 'processing') {
       return NextResponse.json({ error: 'Esta fotografía ya se está procesando. Espera un momento y vuelve a intentar la misma subida.' }, { status: 409 });
     }
-    else if (!(data instanceof Blob)) processingWarning = 'Clipdrop devolvió una respuesta no válida. Se guardará la imagen original.';
+    else if (!(data instanceof Blob)) processingWarning = 'La prenda se guardó. La imagen original se conserva.';
     else {
       const result = new Uint8Array(await data.arrayBuffer());
       const validPng = data.type.includes('image/png') && result.length >= 26 && [137,80,78,71,13,10,26,10].every((byte,index) => result[index] === byte) && [4,6].includes(result[25]) && result.length <= MAX_FILE_SIZE;
       if (validPng) processedBytes = result;
-      else processingWarning = 'El resultado de Clipdrop no pasó la validación. Se guardará la imagen original.';
+      else processingWarning = 'La prenda se guardó. La imagen original se conserva.';
     }
   }
   const processedPath = processedBytes ? `${user.id}/processing/${processingJobId}.png` : null;

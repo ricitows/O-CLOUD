@@ -19,10 +19,8 @@ function weatherLabel(code: number) {
 }
 
 async function edgeErrorMessage(error: { context?: unknown }) {
-  if (error.context instanceof Response) {
-    try { const payload = await error.context.clone().json(); if (typeof payload.error === 'string') return payload.error; } catch { /* use fallback below */ }
-  }
-  return 'La sugerencia avanzada no está disponible ahora; se mantuvo la recomendación habitual.';
+  void error;
+  return 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
 }
 
 export async function POST(request: Request) {
@@ -34,8 +32,8 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'La solicitud no tiene un formato válido.' }, { status: 400 }); }
   const latitude = Number(body.latitude); const longitude = Number(body.longitude);
   const occasion = typeof body.occasion === 'string' ? body.occasion.trim().slice(0, 80) : '';
-  const allowPaid = process.env.NODE_ENV === 'development' || body.allow_paid === true;
-  if (!allowPaid) return NextResponse.json({ error: 'Autoriza OpenAI desde la interfaz para usar la recomendación avanzada.' }, { status: 403 });
+  const allowPaid = body.allow_paid === true;
+  if (!allowPaid) return NextResponse.json({ error: 'Autoriza el procesamiento externo para solicitar una recomendación avanzada.' }, { status: 403 });
   const useAi = true;
   const requestId = body.request_id;
   if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return NextResponse.json({ error: 'No se pudo iniciar una solicitud única de recomendación.' }, { status: 400 });
@@ -60,6 +58,7 @@ export async function POST(request: Request) {
   if (!garments?.length) return NextResponse.json({ error: 'Añade prendas a tu Closet antes de pedir una recomendación.' }, { status: 409 });
 
   let recommendation: { ids: string[]; explanation: string } = { ids: fallbackPick(garments, weather).map(item => item.id), explanation: 'Una combinación pensada para el clima y la ocasión.' };
+  if (!recommendation.ids.length) return NextResponse.json({ error: 'No pudimos generar sugerencias en este momento. Inténtalo más tarde.' }, { status: 503 });
   let source: 'ai' | 'rules' = 'rules';
   let assistantNotice: string | null = null;
   if (useAi) {
@@ -72,8 +71,8 @@ export async function POST(request: Request) {
       const validIds = (data.garment_ids as unknown[]).filter((id): id is string => typeof id === 'string' && owned.has(id));
       const ids = [...new Set<string>(validIds)].slice(0, 5);
       if (ids.length) { recommendation = { ids, explanation: data.explanation.slice(0, 300) }; source = 'ai'; }
-      else assistantNotice = 'La sugerencia avanzada no encontró prendas válidas; se mantuvo la recomendación habitual.';
-    } else assistantNotice = 'La sugerencia avanzada no estuvo disponible; se mantuvo la recomendación habitual.';
+      else assistantNotice = 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
+    } else assistantNotice = 'Preparamos una sugerencia alternativa con prendas de tu Closet.';
   }
   const selected = (garments as Garment[]).filter(item => recommendation.ids.includes(item.id));
   const items = await Promise.all(selected.map(async item => {

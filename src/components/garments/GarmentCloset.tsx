@@ -19,7 +19,6 @@ type Garment = {
 };
 
 const categories = ['Parte superior', 'Parte inferior', 'Prendas completas', 'Calzado', 'Accesorios', 'Ropa deportiva', 'Ropa de dormir', 'Ropa interior', 'Formal', 'Temporada'];
-const localProviderAutomation = process.env.NODE_ENV === 'development';
 function hasSupportedImageSignature(bytes: Uint8Array) {
   const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   const png = bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
@@ -44,7 +43,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState('recent');
   const [busy, setBusy] = useState(false);
-  const [allowClipdrop, setAllowClipdrop] = useState(false);
+  const [allowImageProcessing, setAllowImageProcessing] = useState(false);
   const [notice, setNotice] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState({ name: '', category: categories[0], subcategory: '', color: '' });
@@ -78,7 +77,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && !busy) { setAdding(false); setFile(null); setAllowClipdrop(false); uploadRequestId.current = null; }
+    if (event.key === 'Escape' && !busy) { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape); };
@@ -122,7 +121,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
       return;
     }
     setFile(candidate);
-    setAllowClipdrop(false);
+    setAllowImageProcessing(false);
     uploadRequestId.current = crypto.randomUUID();
     if (!name) setName(candidate.name.replace(/\.[^.]+$/, '').slice(0, 100));
     setNotice('');
@@ -138,14 +137,13 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
     const requestId = uploadRequestId.current || crypto.randomUUID();
     uploadRequestId.current = requestId;
     data.set('processing_job_id', requestId);
-    data.set('allow_paid', localProviderAutomation || allowClipdrop ? 'yes' : 'no');
+    data.set('allow_paid', allowImageProcessing ? 'yes' : 'no');
     try {
       const response = await fetch('/api/garments', { method: 'POST', body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'No se pudo guardar la prenda.');
       setItems(current => [result.garment, ...current]);
-      setAdding(false); setFile(null); setName(''); setSubcategory(''); setColor(''); setAllowClipdrop(false); uploadRequestId.current = null;
-      uploadRequestId.current = null;
+      setAdding(false); setFile(null); setName(''); setSubcategory(''); setColor(''); setAllowImageProcessing(false); uploadRequestId.current = null;
       setNotice([result.processing_warning, result.garment.image_error].filter(Boolean).join(' ') || (result.garment.processing_status === 'ready' ? 'Prenda procesada y guardada en tu Closet.' : 'Prenda guardada de forma privada.'));
       router.refresh();
     } catch (error) { setNotice(error instanceof Error ? error.message : 'No se pudo guardar la prenda.'); }
@@ -241,11 +239,11 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
   }
 
   return <div className="garment-closet">
-    <div className="closet-masthead"><div><h1>Closet</h1></div><div className="closet-masthead-actions"><div className="closet-piece-count"><b>{items.length.toString().padStart(2, '0')}</b><span>PRENDAS</span></div><button className="primary-button" type="button" onClick={() => { setAdding(true); setAllowClipdrop(false); setNotice(''); }}>＋ Añadir prenda</button></div></div>
+    <div className="closet-masthead"><div><h1>Closet</h1></div><div className="closet-masthead-actions"><div className="closet-piece-count"><b>{items.length.toString().padStart(2, '0')}</b><span>PRENDAS</span></div><button className="primary-button" type="button" onClick={() => { setAdding(true); setAllowImageProcessing(false); setNotice(''); }}>＋ Añadir prenda</button></div></div>
     {notice && <p className="garment-notice" role="status">{notice}</p>}
-    {adding && <div className="garment-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) { setAdding(false); setFile(null); setAllowClipdrop(false); uploadRequestId.current = null; } }}>
+    {adding && <div className="garment-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; } }}>
       <form className="upload-panel garment-form garment-modal" role="dialog" aria-modal="true" aria-labelledby="garment-modal-title" onSubmit={saveGarment}>
-        <div className="garment-modal-heading"><div><h2 id="garment-modal-title">Añadir prenda</h2></div><button className="close-button" type="button" aria-label="Cerrar formulario" onClick={() => { setAdding(false); setFile(null); setAllowClipdrop(false); uploadRequestId.current = null; }}>×</button></div>
+        <div className="garment-modal-heading"><div><h2 id="garment-modal-title">Añadir prenda</h2></div><button className="close-button" type="button" aria-label="Cerrar formulario" onClick={() => { setAdding(false); setFile(null); setAllowImageProcessing(false); uploadRequestId.current = null; }}>×</button></div>
         <p className="muted">La foto se guarda en almacenamiento privado.</p>
         {notice && <p className="garment-notice" role="alert">{notice}</p>}
         <label className={`upload-drop ${preview ? 'has-photo' : ''}`} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); selectFile(event.dataTransfer.files[0]); }}>
@@ -253,7 +251,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
           <input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onChange={event => { void selectFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
         </label>
         <div className="garment-fields"><label>Nombre<input value={name} onChange={event => { uploadRequestId.current = null; setName(event.target.value); }} maxLength={100} required /></label><label>Categoría<select value={category} onChange={event => { uploadRequestId.current = null; setCategory(event.target.value); }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label>Subcategoría<input value={subcategory} onChange={event => { uploadRequestId.current = null; setSubcategory(event.target.value); }} maxLength={80} placeholder="Opcional" /></label><label>Color<input value={color} onChange={event => { uploadRequestId.current = null; setColor(event.target.value); }} maxLength={60} placeholder="Opcional" /></label></div>
-        {!localProviderAutomation && <label className="paid-opt-in"><input type="checkbox" checked={allowClipdrop} onChange={event => setAllowClipdrop(event.target.checked)} />Autoriza Clipdrop para quitar el fondo y consumir créditos. Si no lo autorizas, se guardará la fotografía original.</label>}
+        <label className="paid-opt-in"><input type="checkbox" checked={allowImageProcessing} onChange={event => setAllowImageProcessing(event.target.checked)} />Autorizo el procesamiento externo, que puede generar costos, para mejorar esta imagen. Si no lo autorizas, se conservará la fotografía original.</label>
         <div className="upload-actions"><span>JPG, PNG o WEBP · Máximo 10 MB</span><button className="primary-button" type="submit" disabled={!file || !name.trim() || busy || !enabled}>{busy ? 'Procesando y guardando…' : 'Guardar prenda'}</button></div>
         {!enabled && <div className="integration-note">Conecta Supabase para guardar prendas en tu cuenta. Esta vista previa no persiste.</div>}
       </form>
@@ -262,7 +260,7 @@ export default function GarmentCloset({ enabled, tripoAvailable = false, addRequ
     <div className="closet-category-rail" aria-label="Categorías de prendas"><button type="button" className={filter === 'Todas' ? 'selected' : ''} onClick={() => setFilter('Todas')}>Todas <span>{items.length}</span></button>{categories.map(value => { const count = items.filter(item => item.category === value).length; return <button type="button" key={value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{value}<span>{count}</span></button>; })}</div>
     {!enabled && <div className="integration-note wide-note">Conecta Supabase para guardar prendas.</div>}
     {loadError && <div className="integration-note wide-note" role="alert">{loadError} <button className="text-button" onClick={() => void refresh()}>Reintentar ↻</button></div>}
-    {loading ? <div className="empty-closet"><p>Cargando tu guardarropa…</p></div> : visibleItems.length ? <div className="garment-grid">{visibleItems.map((item, index) => { const model = modelState[item.id]; return <article className={`garment-card ${index === 0 ? 'garment-feature' : ''}`} key={item.id}><div className="garment-image">{item.image_url ? <Image src={item.image_url} alt={item.name} fill unoptimized sizes="(max-width: 700px) 50vw, 320px" /> : <span>{item.image_error || 'Imagen privada no disponible'}</span>}<div className="garment-image-actions"><button className="garment-favorite" type="button" onClick={() => void toggleFavorite(item)} aria-label={item.is_favorite ? `Quitar ${item.name} de favoritos` : `Marcar ${item.name} como favorito`}>{item.is_favorite ? '♥' : '♡'}</button><button className="garment-delete" type="button" onClick={() => void removeGarment(item)} disabled={busy} aria-label={`Eliminar ${item.name}`}>×</button></div><div className="garment-image-caption"><span>{item.category}</span><b>{item.name}</b></div></div><div className="garment-meta"><div className="garment-meta-detail"><span>{[item.subcategory, item.color].filter(Boolean).join(' · ') || 'Prenda'}</span><small className="garment-processing-state">{item.processing_status === 'ready' ? 'Procesada' : 'Original'}</small></div><button type="button" className="text-button garment-edit-trigger" onClick={() => beginEdit(item)}>Editar <span>↗</span></button>{editingId === item.id && <form className="garment-edit-form" onSubmit={saveEdit}><label>Nombre<input value={editDraft.name} onChange={event => setEditDraft(value => ({ ...value, name: event.target.value }))} maxLength={100} required /></label><label>Categoría<select value={editDraft.category} onChange={event => setEditDraft(value => ({ ...value, category: event.target.value }))}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label>Subcategoría<input value={editDraft.subcategory} onChange={event => setEditDraft(value => ({ ...value, subcategory: event.target.value }))} maxLength={80} /></label><label>Color<input value={editDraft.color} onChange={event => setEditDraft(value => ({ ...value, color: event.target.value }))} maxLength={60} /></label><div><button className="primary-button" type="submit" disabled={busy}>{busy ? 'Guardando…' : 'Guardar'}</button><button className="text-button" type="button" onClick={() => setEditingId(null)}>Cancelar</button></div></form>}<div className="model-3d"><b>ESTIMACIÓN 3D</b>{item.model_3d_path || model?.status === 'completed' ? <a href={model?.url || undefined} target="_blank" rel="noreferrer">Abrir GLB privado ↗</a> : tripoAvailable ? <><button type="button" className="text-button model-generate-button" disabled={!enabled || ['starting','processing'].includes(model?.status || '')} onClick={() => void modelAction(item, model?.status === 'paused')}>{model?.status === 'processing' ? `Generando ${model.progress || 0}%…` : model?.status === 'paused' ? 'Reanudar 3D' : model?.status === 'failed' ? 'Reintentar' : 'Generar 3D'}</button></> : <small>Tripo no está conectado. </small>}<small>Reconstrucción aproximada desde una vista. No es escaneo 360° ni geometría exacta.</small></div></div></article>; })}</div> : <div className="empty-closet closet-empty-editorial"><div className="empty-art"><div className="hanger">⌁</div><div className="empty-frame"><span>✳</span><small>PRENDAS</small></div><div className="empty-shadow"/></div><div><h2>{items.length ? 'No encontramos prendas con esos filtros.' : 'Sin prendas'}</h2><p>{items.length ? 'Prueba otra búsqueda o categoría.' : ''}</p>{!items.length && <button className="primary-button" onClick={() => setAdding(true)}>Añadir prenda <span>＋</span></button>}</div></div>}
+    {loading ? <div className="empty-closet"><p>Cargando tu guardarropa…</p></div> : visibleItems.length ? <div className="garment-grid">{visibleItems.map((item, index) => { const model = modelState[item.id]; return <article className={`garment-card ${index === 0 ? 'garment-feature' : ''}`} key={item.id}><div className="garment-image">{item.image_url ? <Image src={item.image_url} alt={item.name} fill unoptimized sizes="(max-width: 700px) 50vw, 320px" /> : <span>{item.image_error || 'Imagen privada no disponible'}</span>}<div className="garment-image-actions"><button className="garment-favorite" type="button" onClick={() => void toggleFavorite(item)} aria-label={item.is_favorite ? `Quitar ${item.name} de favoritos` : `Marcar ${item.name} como favorito`}>{item.is_favorite ? '♥' : '♡'}</button><button className="garment-delete" type="button" onClick={() => void removeGarment(item)} disabled={busy} aria-label={`Eliminar ${item.name}`}>×</button></div><div className="garment-image-caption"><span>{item.category}</span><b>{item.name}</b></div></div><div className="garment-meta"><div className="garment-meta-detail"><span>{[item.subcategory, item.color].filter(Boolean).join(' · ') || 'Prenda'}</span><small className="garment-processing-state">{item.processing_status === 'ready' ? 'Procesada' : 'Original'}</small></div><button type="button" className="text-button garment-edit-trigger" onClick={() => beginEdit(item)}>Editar <span>↗</span></button>{editingId === item.id && <form className="garment-edit-form" onSubmit={saveEdit}><label>Nombre<input value={editDraft.name} onChange={event => setEditDraft(value => ({ ...value, name: event.target.value }))} maxLength={100} required /></label><label>Categoría<select value={editDraft.category} onChange={event => setEditDraft(value => ({ ...value, category: event.target.value }))}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label>Subcategoría<input value={editDraft.subcategory} onChange={event => setEditDraft(value => ({ ...value, subcategory: event.target.value }))} maxLength={80} /></label><label>Color<input value={editDraft.color} onChange={event => setEditDraft(value => ({ ...value, color: event.target.value }))} maxLength={60} /></label><div><button className="primary-button" type="submit" disabled={busy}>{busy ? 'Guardando…' : 'Guardar'}</button><button className="text-button" type="button" onClick={() => setEditingId(null)}>Cancelar</button></div></form>}<div className="model-3d"><b>ESTIMACIÓN 3D</b>{item.model_3d_path || model?.status === 'completed' ? <a href={model?.url || undefined} target="_blank" rel="noreferrer">Abrir GLB privado ↗</a> : tripoAvailable ? <><button type="button" className="text-button model-generate-button" disabled={!enabled || ['starting','processing'].includes(model?.status || '')} onClick={() => void modelAction(item, model?.status === 'paused')}>{model?.status === 'processing' ? `Generando ${model.progress || 0}%…` : model?.status === 'paused' ? 'Reanudar 3D' : model?.status === 'failed' ? 'Reintentar' : 'Generar 3D'}</button></> : <small>La generación 3D no está disponible por ahora. </small>}<small>Reconstrucción aproximada desde una vista. No es escaneo 360° ni geometría exacta.</small></div></div></article>; })}</div> : <div className="empty-closet closet-empty-editorial"><div className="empty-art"><div className="hanger">⌁</div><div className="empty-frame"><span>✳</span><small>PRENDAS</small></div><div className="empty-shadow"/></div><div><h2>{items.length ? 'No encontramos prendas con esos filtros.' : 'Sin prendas'}</h2><p>{items.length ? 'Prueba otra búsqueda o categoría.' : ''}</p>{!items.length && <button className="primary-button" onClick={() => setAdding(true)}>Añadir prenda <span>＋</span></button>}</div></div>}
   </div>;
 }
 
